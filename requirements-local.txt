@@ -1,0 +1,7 @@
+# 本地嵌入模型依赖（jina-embeddings-v5-text-nano）
+# 安装: pip install -r requirements-local.txt
+
+-r requirements.txt
+sentence-transformers>=3.0.0
+torch>=2.0.0
+peft>=0.15.0

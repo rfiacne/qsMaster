@@ -1,0 +1,6 @@
+# PDF 增强依赖（OpenDataLoader，benchmark #1 PDF 解析器）
+# 要求: Java 11+
+# 安装: pip install -r requirements-pdf.txt
+# 或全量: pip install -r requirements-all.txt
+
+opendataloader-pdf>=0.1.0

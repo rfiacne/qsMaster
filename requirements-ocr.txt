@@ -1,0 +1,6 @@
+# OCR 依赖（PaddleOCR，用于 PDF 扫描件和图片文字识别）
+# 安装: pip install -r requirements-ocr.txt
+# 或全量: pip install -r requirements-all.txt
+
+paddlepaddle>=2.6.0
+paddleocr>=2.7.0

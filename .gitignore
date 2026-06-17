@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+*.egg
+
+# Runtime data
+data/
+
+# Test files
+t.txt
+test.txt
+test_upload.txt
+
+# IDE / tools
+.reasonix/
+.claude/
+.serena/
+.specify/
+.codegraph/
+.venv/
+
+# Wiki submodules (keep git links, ignore content)
+wiki/
+
+# OS
+Thumbs.db
+.DS_Store

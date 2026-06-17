@@ -1,0 +1,56 @@
+# ~/.qa/config.yaml
+# Securities QA Agent 配置文件
+#
+# API 密钥配置方式（任选其一，直接值优先级最高）:
+#   方式 A: 在下面直接写 api_key: "sk-xxx"
+#   方式 B: 设置环境变量，在下面写 api_key_env: "环境变量名"
+#   方式 C: 不写，openai 库会自动读 OPENAI_API_KEY 环境变量
+
+llm:
+  api_base_url: "http://internal-llm:8000/v1"
+  model: "gpt-4"
+  # api_key: "sk-your-key-here"       # ← 方式 A: 直接填
+  api_key_env: "INTERNAL_API_KEY"      # ← 方式 B: 从环境变量读取
+  timeout_seconds: 30
+
+embedding:
+  backend: "auto"                      # auto(远程→本地fallback) | api(仅远程) | local(仅本地)
+  api_base_url: "http://internal-llm:8000/v1"
+  model: "bge-m3"
+  dimensions: 1024
+  # api_key: "sk-your-key-here"       # ← 可单独设，不设则用 LLM 的 key
+  api_key_env: ""
+  timeout_seconds: 30
+
+vector_store:
+  type: "turbovec"
+  bit_width: 4
+  similarity_function: "cosine"
+  persist_path: "./data/index"
+
+retrieval:
+  top_k: 5
+  auto_merge_threshold: 0.5
+  min_score: 0.1           # 检索结果最低分数（低于此不显示）
+  use_hybrid: true          # 使用混合检索（BM25 + 向量）
+  hybrid_vector_weight: 0.5 # 向量检索权重 (0-1)，剩余为 BM25 权重
+  block_sizes:
+    - 500
+    - 100
+
+indexing:
+  batch_size: 100
+  ocr_enabled: false
+
+rerank:
+  enabled: false                # 启用 Reranker 精排（cross-encoder 二次打分）
+  api_base_url: ""              # 空则复用 embedding.api_base_url
+  api_key: ""                   # 空则复用 embedding 或 llm 的 key
+  api_key_env: ""
+  model: "Qwen/Qwen3-Reranker-4B"
+  top_k: 5
+
+server:
+  host: "127.0.0.1"       # 监听地址，0.0.0.0 允许局域网访问
+  port: 8001               # 服务端口
+  reload: false            # 开发模式自动重启

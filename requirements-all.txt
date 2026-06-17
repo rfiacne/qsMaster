@@ -1,0 +1,7 @@
+# 全量依赖（核心 + 开发 + OCR + PDF 增强 + 本地模型）
+# 安装: pip install -r requirements-all.txt
+
+-r requirements.txt
+-r requirements-dev.txt
+-r requirements-ocr.txt
+-r requirements-pdf.txt
