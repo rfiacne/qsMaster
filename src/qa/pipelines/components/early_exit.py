@@ -586,8 +586,83 @@ class EarlyExitMatcher:
         return MatchResult()
 
     def match_batch(self, questions: list[str]) -> list[MatchResult]:
-        """批量匹配（可复用嵌入计算的批处理）"""
-        return [self.match(q) for q in questions]
+        """批量匹配——单次批量嵌入所有问题，减少 embedding API 往返
+
+        对模糊匹配的问题一次性调用 embed_texts 进行批量嵌入，
+        然后逐个匹配，复用计算结果。
+        """
+        if not questions:
+            return []
+
+        # 分离精确匹配和模糊匹配的问题
+        results: list[MatchResult] = []
+        fuzzy_questions: list[tuple[int, str]] = []  # (index, question)
+
+        for i, q in enumerate(questions):
+            if not self.enabled or not q.strip():
+                results.append(MatchResult())
+                continue
+
+            self._ensure_loaded()
+            normalized = StandardAnswerStore._normalize(q)
+
+            # 先尝试精确匹配
+            exact_hit = self._match_exact(normalized)
+            if exact_hit is not None:
+                results.append(MatchResult(
+                    matched=True,
+                    answer=exact_hit,
+                    match_type="exact",
+                    score=1.0,
+                ))
+            else:
+                fuzzy_questions.append((i, q))
+                # 占位，稍后填充
+                results.append(MatchResult())
+
+        if not fuzzy_questions:
+            return results
+
+        # 批量嵌入所有需要模糊匹配的问题
+        self._build_index()
+        self._ensure_loaded()
+
+        try:
+            from qa.pipelines.components.embedder import embed_texts
+
+            fuzzy_texts = [q for _, q in fuzzy_questions]
+            batch_embeddings = embed_texts(fuzzy_texts)
+
+            # 逐个模糊匹配
+            for (orig_idx, question), query_embedding in zip(fuzzy_questions, batch_embeddings):
+                if not query_embedding:
+                    continue
+                best_answer: StandardAnswer | None = None
+                best_score = 0.0
+
+                for answer in self.store.list_enabled():
+                    if answer.match_strategy not in ("fuzzy", "both"):
+                        continue
+                    cached = self._embedding_cache.get(answer.id)
+                    if not cached:
+                        continue
+                    score = self._cosine_similarity(query_embedding, cached)
+                    if score > best_score:
+                        best_score = score
+                        best_answer = answer
+
+                if best_answer and best_score >= self.fuzzy_threshold:
+                    results[orig_idx] = MatchResult(
+                        matched=True,
+                        answer=best_answer,
+                        match_type="fuzzy",
+                        score=best_score,
+                    )
+        except Exception as e:
+            logger.error(f"批量嵌入匹配失败: {e}")
+            # 不重试单次匹配，直接返回已有结果
+
+        return results
 
     # ─── 精确匹配 ───────────────────────────────────────────────
 

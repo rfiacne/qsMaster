@@ -10,6 +10,7 @@ API 完全兼容 Haystack 2.x DocumentStore 接口，
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import time
@@ -64,6 +65,41 @@ class StoreManager:
         self.chunk_store: Any = None  # TurboQuantDocumentStore
         self.parent_store: Any = None  # TurboQuantDocumentStore
         self._initialized = False
+        self._version: str = ""
+
+    @property
+    def store_version(self) -> str:
+        """chunk store 版本号
+
+        基于 chunk 数量 + 索引文件 mtime 的哈希值。
+        索引内容变化（增/删文档、重建）时版本号变化，未变更时稳定。
+        用于 BM25 持久化索引的失效判定。
+        """
+        if not self._initialized:
+            self.initialize()
+        if not self._version:
+            self._version = self._compute_version()
+        return self._version
+
+    def _compute_version(self) -> str:
+        """计算当前索引版本哈希"""
+        chunk_count = self.count_chunks()
+        # 收集索引文件的 mtime
+        mtimes: list[float] = []
+        persist = Path(self.persist_path)
+        if persist.exists():
+            for tvim_file in persist.rglob("index.tvim"):
+                try:
+                    mtimes.append(tvim_file.stat().st_mtime)
+                except OSError:
+                    pass
+        # 组合输入
+        raw = f"{chunk_count}:{sorted(mtimes)}"
+        return hashlib.sha256(raw.encode()).hexdigest()[:12]
+
+    def invalidate_version(self) -> None:
+        """强制下一次读取时重新计算版本号"""
+        self._version = ""
 
     def initialize(self) -> None:
         """初始化向量存储（加载或新建）"""
@@ -111,7 +147,9 @@ class StoreManager:
         """写入小块文档到 chunk_store（用于向量检索）"""
         if not self._initialized:
             self.initialize()
-        return self.chunk_store.write_documents(documents, policy=policy)
+        result = self.chunk_store.write_documents(documents, policy=policy)
+        self.invalidate_version()
+        return result
 
     def write_parents(
         self,
@@ -121,7 +159,9 @@ class StoreManager:
         """写入大块文档到 parent_store（用于 LLM 上下文）"""
         if not self._initialized:
             self.initialize()
-        return self.parent_store.write_documents(documents, policy=policy)
+        result = self.parent_store.write_documents(documents, policy=policy)
+        self.invalidate_version()
+        return result
 
     # ─── 检索 ───────────────────────────────────────────────
 
@@ -192,6 +232,8 @@ class StoreManager:
             self.initialize()
         count = self.chunk_store.delete_documents(ids)
         count += self.parent_store.delete_documents(ids)
+        if count > 0:
+            self.invalidate_version()
         return count
 
     def delete_by_filter(self, filters: dict) -> int:
@@ -200,6 +242,8 @@ class StoreManager:
             self.initialize()
         count = self.chunk_store.delete_by_filter(filters)
         count += self.parent_store.delete_by_filter(filters)
+        if count > 0:
+            self.invalidate_version()
         return count
 
     def delete_all(self) -> int:
@@ -208,6 +252,8 @@ class StoreManager:
             self.initialize()
         c1 = self.chunk_store.delete_all_documents()
         c2 = self.parent_store.delete_all_documents()
+        if c1 + c2 > 0:
+            self.invalidate_version()
         return c1 + c2
 
     # ─── 持久化 ───────────────────────────────────────────────
@@ -230,6 +276,7 @@ class StoreManager:
         self.chunk_store.save_to_disk(str(chunk_path))
         self.parent_store.save_to_disk(str(parent_path))
         elapsed = time.time() - t0
+        self.invalidate_version()
 
         logger.info(f"索引持久化完成 ({elapsed:.2f}s): {persist}")
 

@@ -154,6 +154,10 @@ class RetrievalConfig(BaseSettings):
         default=[500, 100],
         description="分层分块大小（字符数），[大块大小, 小块大小]",
     )
+    rrf_k: int = Field(
+        default=35, ge=1, le=200,
+        description="RRF 融合常数，越小排名区分度越大（默认 35）",
+    )
 
 
 class IndexingConfig(BaseSettings):
@@ -171,7 +175,7 @@ class RerankConfig(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="qa_rerank_")
 
     enabled: bool = Field(
-        default=False,
+        default=True,
         description="启用 Reranker 精排（对混合检索结果二次打分，提升准确率）",
     )
     api_base_url: str = Field(
@@ -252,12 +256,58 @@ class FaithfulnessConfig(BaseSettings):
         description="校验模式: llm | disabled",
     )
     threshold: float = Field(
-        default=0.5, ge=0.0, le=1.0,
-        description="通过阈值：支撑比例 ≥ 此值算 PASS，< 此值算 FAIL",
+        default=0.7, ge=0.0, le=1.0,
+        description="通过阈值：支撑比例 ≥ 此值算 PASS，< 此值算 FAIL（M6: 从 0.5 提升至 0.7）",
     )
     max_claims: int = Field(
         default=10, ge=1, le=30,
-        description="最多校验的声明数（超长回答截断）",
+        description="最多校验的声明数（超长回答按段落分段聚合，不再硬截断）",
+    )
+    judge_model: str = Field(
+        default="",
+        description="校验用模型名（空则复用 LLM 主模型；设置独立模型避免自评偏差）",
+    )
+
+
+class QueryRewriteConfig(BaseSettings):
+    """查询改写配置"""
+
+    model_config = SettingsConfigDict(env_prefix="qa_query_rewrite_")
+
+    enabled: bool = Field(
+        default=True,
+        description="启用查询改写（术语归一化 + 多意图分解）",
+    )
+    model: str = Field(
+        default="",
+        description="改写用模型（空则复用 LLM 主模型）",
+    )
+    timeout_seconds: float = Field(
+        default=3.0, ge=0.5, le=30.0,
+        description="LLM 改写调用超时（秒）",
+    )
+    term_map_path: str = Field(
+        default="./data/term_map.json",
+        description="术语映射表路径（证券简称→全称）",
+    )
+
+
+class QueryCacheConfig(BaseSettings):
+    """查询缓存配置"""
+
+    model_config = SettingsConfigDict(env_prefix="qa_query_cache_")
+
+    enabled: bool = Field(
+        default=True,
+        description="启用查询级 LRU 缓存",
+    )
+    max_size: int = Field(
+        default=256, ge=16, le=65536,
+        description="LRU 缓存最大条目数",
+    )
+    ttl_seconds: float = Field(
+        default=300.0, ge=10.0, le=86400.0,
+        description="缓存 TTL（秒，默认 5 分钟）",
     )
 
 
@@ -312,6 +362,8 @@ class Settings(BaseSettings):
     rerank: RerankConfig = Field(default_factory=RerankConfig)
     early_exit: EarlyExitConfig = Field(default_factory=EarlyExitConfig)
     faithfulness: FaithfulnessConfig = Field(default_factory=FaithfulnessConfig)
+    query_rewrite: QueryRewriteConfig = Field(default_factory=QueryRewriteConfig)
+    query_cache: QueryCacheConfig = Field(default_factory=QueryCacheConfig)
     pg: PgConfig = Field(default_factory=PgConfig)
     otel: OTelConfig = Field(default_factory=OTelConfig)
 
@@ -336,7 +388,8 @@ class Settings(BaseSettings):
             # 递归合并各 section
             for section_key in (
                 "llm", "embedding", "vector_store", "retrieval", "indexing",
-                "server", "rerank", "early_exit", "faithfulness", "pg", "otel",
+                "server", "rerank", "early_exit", "faithfulness",
+                "query_rewrite", "query_cache", "pg", "otel",
             ):
                 if section_key in raw:
                     section_data = raw[section_key]
@@ -379,6 +432,7 @@ class Settings(BaseSettings):
                 "use_hybrid": self.retrieval.use_hybrid,
                 "hybrid_vector_weight": self.retrieval.hybrid_vector_weight,
                 "block_sizes": self.retrieval.block_sizes,
+                "rrf_k": self.retrieval.rrf_k,
             },
             "indexing": {
                 "batch_size": self.indexing.batch_size,
@@ -406,6 +460,18 @@ class Settings(BaseSettings):
                 "mode": self.faithfulness.mode,
                 "threshold": self.faithfulness.threshold,
                 "max_claims": self.faithfulness.max_claims,
+                "judge_model": self.faithfulness.judge_model or "(复用 LLM)",
+            },
+            "query_rewrite": {
+                "enabled": self.query_rewrite.enabled,
+                "model": self.query_rewrite.model or "(复用 LLM)",
+                "timeout_seconds": self.query_rewrite.timeout_seconds,
+                "term_map_path": self.query_rewrite.term_map_path,
+            },
+            "query_cache": {
+                "enabled": self.query_cache.enabled,
+                "max_size": self.query_cache.max_size,
+                "ttl_seconds": self.query_cache.ttl_seconds,
             },
             "otel": {
                 "enabled": self.otel.enabled,

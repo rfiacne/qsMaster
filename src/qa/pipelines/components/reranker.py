@@ -81,7 +81,7 @@ class Reranker:
                 base_url=base_url, api_key=api_key,
             )
         except Exception as e:
-            logger.error(f"Reranker 调用失败: {e}，回退到原始排序")
+            logger.warning(f"Reranker 调用失败: {e}，回退到原始排序")
             return documents[:k]
 
         # 将分数关联到文档并按分数排序

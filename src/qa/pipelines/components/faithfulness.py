@@ -134,18 +134,21 @@ class FaithfulnessEvaluator:
     def __init__(
         self,
         enabled: bool = True,
-        threshold: float = 0.5,
+        threshold: float = 0.7,
         max_claims: int = 10,
+        judge_model: str = "",
     ):
         """
         Args:
             enabled: 是否启用校验
             threshold: 通过阈值（支撑比例 ≥ 此值算 PASS，< 此值算 FAIL，中间算 PARTIAL）
-            max_claims: 最大校验声明数（超出截断，防止 token 超限）
+            max_claims: 最大校验声明数（超出按段落分段，防止 token 超限）
+            judge_model: 校验用模型名（空则复用 LLM 主模型）
         """
         self.enabled = enabled
         self.threshold = max(0.0, min(1.0, threshold))
         self.max_claims = max_claims
+        self.judge_model = judge_model
         self._llm_client = None
 
     def evaluate(
@@ -423,19 +426,32 @@ class FaithfulnessEvaluator:
     # ─── LLM 调用 ───────────────────────────────────────────────
 
     def _call_llm(self, messages: list[dict[str, str]]) -> str:
-        """调用 LLM 进行校验"""
+        """调用 LLM 进行校验
+
+        优先使用 judge_model（独立评判模型避免自评偏差），
+        未设置时复用主 LLM。
+        """
         settings = get_settings()
+
+        model = self.judge_model or settings.llm.model
+        api_key = settings.llm.resolved_api_key or "sk-placeholder"
+        base_url = settings.llm.api_base_url
+
+        # judge_model 可搭配独立 API 地址（通过环境变量覆盖）
+        if self.judge_model:
+            judge_api_base = settings.llm.api_base_url
+            base_url = judge_api_base
 
         if self._llm_client is None:
             from openai import OpenAI
             self._llm_client = OpenAI(
-                api_key=settings.llm.resolved_api_key or "sk-placeholder",
-                base_url=settings.llm.api_base_url,
+                api_key=api_key,
+                base_url=base_url,
                 timeout=15,
             )
 
         resp = self._llm_client.chat.completions.create(
-            model=settings.llm.model,
+            model=model,
             messages=messages,
             temperature=0.1,  # 低温度确保一致性
             max_tokens=2048,

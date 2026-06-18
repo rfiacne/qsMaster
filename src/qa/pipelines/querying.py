@@ -22,6 +22,8 @@ from qa.config.settings import get_settings
 from qa.pipelines.components.audit_logger import AuditRecord, AuditStore
 from qa.pipelines.components.faithfulness import FaithfulnessEvaluator
 from qa.pipelines.components.hybrid_retriever import HybridRetriever
+from qa.pipelines.components.query_cache import QueryCache
+from qa.pipelines.components.query_rewriter import QueryRewriter
 from qa.pipelines.components.reranker import Reranker
 from qa.pipelines.components.review_queue import ReviewWorkflow
 from qa.pipelines.components.tracing import get_metrics, get_tracer
@@ -76,6 +78,8 @@ class QueryResult:
     generation_time_ms: float = 0.0
     total_time_ms: float = 0.0
     api_error: str | None = None
+    # 查询改写字段
+    rewritten_question: str = ""
     # Early Exit 字段
     from_standard_answer: bool = False
     match_type: str = ""  # "exact" | "fuzzy" | ""
@@ -138,6 +142,8 @@ class QueryPipeline:
         faithfulness_evaluator: FaithfulnessEvaluator | None = None,
         review_workflow: ReviewWorkflow | None = None,
         audit_store: AuditStore | None = None,
+        query_rewriter: QueryRewriter | None = None,
+        query_cache: QueryCache | None = None,
     ):
         self.store_manager = store_manager
         self.embedder = embedder
@@ -151,6 +157,8 @@ class QueryPipeline:
         self.faithfulness_evaluator = faithfulness_evaluator
         self.review_workflow = review_workflow
         self.audit_store = audit_store
+        self.query_rewriter = query_rewriter
+        self.query_cache = query_cache
         self.hybrid_retriever = HybridRetriever(
             store_manager=store_manager,
             vector_weight=hybrid_vector_weight,
@@ -224,42 +232,114 @@ class QueryPipeline:
                 )
                 return result
 
-        # 1) 嵌入用户问题
-        retrieval_t0 = time.time()
-        with tracer.start_span("embedding") as span:
-            try:
-                query_embedding = self._embed_query(question)
-                span.set_attribute("dim", len(query_embedding) if query_embedding else 0)
-            except Exception as e:
-                result.api_error = "EMBEDDING_UNAVAILABLE"
-                result.total_time_ms = (time.time() - t0) * 1000
-                span.set_status(f"error: {e}")
-                logger.error(f"嵌入查询失败: {e}")
-                return result
+        # 0.7) 查询缓存 — Early Exit 之后，改写/嵌入之前
+        if self.query_cache is not None:
+            with tracer.start_span("query_cache_check") as span:
+                try:
+                    cached_result = self.query_cache.get(
+                        question=question,
+                        top_k=k,
+                        filters=filters,
+                    )
+                    if cached_result is not None:
+                        logger.info(
+                            f"查询缓存命中: {question[:60]}"
+                        )
+                        span.set_attribute("hit", "true")
+                        return cached_result
+                    span.set_attribute("hit", "false")
+                except Exception as e:
+                    logger.warning(f"查询缓存检查异常（不影响主流程）: {e}")
 
-        # 2) 检索（混合模式：BM25 + 向量，或纯向量）
-        with tracer.start_span("retrieval") as span:
-            try:
-                if self.hybrid_retriever is not None:
-                    chunk_results = self.hybrid_retriever.retrieve(
-                        query_embedding=query_embedding,
-                        query_text=question,
-                        top_k=k,
-                        filters=filters,
-                    )
-                else:
-                    chunk_results = self.store_manager.retrieve(
-                        query_embedding=query_embedding,
-                        top_k=k,
-                        filters=filters,
-                    )
-                span.set_attribute("result_count", len(chunk_results) if chunk_results else 0)
-            except Exception as e:
-                result.api_error = "RETRIEVAL_UNAVAILABLE"
-                result.total_time_ms = (time.time() - t0) * 1000
-                span.set_status(f"error: {e}")
-                logger.error(f"检索失败: {e}")
-                return result
+        # 0.75) 查询改写（术语归一化 + 多意图分解）
+        effective_question = question
+        if self.query_rewriter is not None:
+            with tracer.start_span("query_rewrite") as span:
+                try:
+                    rewrite_result = self.query_rewriter.rewrite(question)
+                    result.rewritten_question = rewrite_result.rewritten
+                    span.set_attribute("was_rewritten", str(rewrite_result.was_rewritten))
+                    span.set_attribute("method", rewrite_result.rewrite_method)
+
+                    if rewrite_result.sub_questions and len(rewrite_result.sub_questions) > 1:
+                        # 多意图：分别嵌入检索后合并
+                        logger.info(
+                            f"多意图分解: {len(rewrite_result.sub_questions)} 子问题"
+                        )
+                        all_chunks: list[Document] = []
+                        for sq in rewrite_result.sub_questions:
+                            try:
+                                sq_emb = self._embed_query(sq)
+                                sq_results = self._retrieve_chunks(
+                                    sq_emb, sq, top_k=k, filters=filters
+                                )
+                                if sq_results:
+                                    all_chunks.extend(sq_results)
+                            except Exception as sq_e:
+                                logger.warning(f"子问题检索失败 \"{sq}\": {sq_e}")
+
+                        # 去重（按文档 id）
+                        seen_ids: set = set()
+                        chunk_results = []
+                        for doc in all_chunks:
+                            doc_id = doc.id or ""
+                            if doc_id not in seen_ids:
+                                seen_ids.add(doc_id)
+                                chunk_results.append(doc)
+
+                        logger.info(
+                            f"多意图合并后: {len(all_chunks)} → {len(chunk_results)} 去重"
+                        )
+                        # 直接跳转到 Reranker（跳过下方单次嵌入+检索）
+                        retrieval_t0 = time.time()
+                        skip_embed_and_retrieve = True
+                    else:
+                        # 单一意图：用改写后问题
+                        effective_question = rewrite_result.rewritten
+                        skip_embed_and_retrieve = False
+                except Exception as e:
+                    logger.warning(f"查询改写异常（回退原始问题）: {e}")
+                    skip_embed_and_retrieve = False
+        else:
+            skip_embed_and_retrieve = False
+
+        if not skip_embed_and_retrieve:
+            # 1) 嵌入用户问题（使用改写后或原始问题）
+            retrieval_t0 = time.time()
+            with tracer.start_span("embedding") as span:
+                try:
+                    query_embedding = self._embed_query(effective_question)
+                    span.set_attribute("dim", len(query_embedding) if query_embedding else 0)
+                except Exception as e:
+                    result.api_error = "EMBEDDING_UNAVAILABLE"
+                    result.total_time_ms = (time.time() - t0) * 1000
+                    span.set_status(f"error: {e}")
+                    logger.error(f"嵌入查询失败: {e}")
+                    return result
+
+            # 2) 检索（混合模式：BM25 + 向量，或纯向量）
+            with tracer.start_span("retrieval") as span:
+                try:
+                    if self.hybrid_retriever is not None:
+                        chunk_results = self.hybrid_retriever.retrieve(
+                            query_embedding=query_embedding,
+                            query_text=effective_question,
+                            top_k=k,
+                            filters=filters,
+                        )
+                    else:
+                        chunk_results = self.store_manager.retrieve(
+                            query_embedding=query_embedding,
+                            top_k=k,
+                            filters=filters,
+                        )
+                    span.set_attribute("result_count", len(chunk_results) if chunk_results else 0)
+                except Exception as e:
+                    result.api_error = "RETRIEVAL_UNAVAILABLE"
+                    result.total_time_ms = (time.time() - t0) * 1000
+                    span.set_status(f"error: {e}")
+                    logger.error(f"检索失败: {e}")
+                    return result
 
         if not chunk_results:
             pass
@@ -311,7 +391,13 @@ class QueryPipeline:
 
         # 6) Faithfulness 校验 — 检查回答是否有检索支撑
         _original_answer = result.answer  # 保存原始回答，供降级/审核使用
-        if result.answer is not None and self.faithfulness_evaluator is not None:
+        _should_skip_faithfulness = (
+            result.answer is None
+            or self.faithfulness_evaluator is None
+            or result.from_standard_answer
+            or self._is_low_risk_context(context_docs)
+        )
+        if not _should_skip_faithfulness:
             with tracer.start_span("faithfulness_check") as span:
                 try:
                     report = self.faithfulness_evaluator.evaluate(
@@ -407,6 +493,23 @@ class QueryPipeline:
         except Exception:
             pass
 
+        # 写入查询缓存（非错误、非 Early Exit 的结果）
+        if (
+            self.query_cache is not None
+            and result.success
+            and not result.from_standard_answer
+        ):
+            try:
+                self.query_cache.put(
+                    question=question,
+                    top_k=k,
+                    result=result,
+                    filters=filters,
+                )
+                logger.debug(f"查询缓存写入完成: {question[:50]}")
+            except Exception as e:
+                logger.warning(f"查询缓存写入异常: {e}")
+
         return result
 
     def run_stream(self, question: str, top_k: int | None = None,
@@ -451,9 +554,19 @@ class QueryPipeline:
                 yield {"type": "done", "total_time_ms": (time.time() - t0) * 1000}
                 return
 
+        # 0.75) 查询改写（流式模式仅做术语归一化，不做多意图分解）
+        effective_question = question
+        if self.query_rewriter is not None:
+            try:
+                rewrite_result = self.query_rewriter.rewrite(question)
+                # 流式模式，跳过多意图分解，使用改写后问题（含术语归一化）
+                effective_question = rewrite_result.rewritten
+            except Exception as e:
+                logger.warning(f"查询改写异常（流式回退原始问题）: {e}")
+
         # 1) 嵌入
         try:
-            query_embedding = self._embed_query(question)
+            query_embedding = self._embed_query(effective_question)
         except Exception as e:
             yield {"type": "error", "code": "EMBEDDING_UNAVAILABLE", "message": str(e)}
             return
@@ -465,7 +578,7 @@ class QueryPipeline:
         try:
             if self.hybrid_retriever is not None:
                 chunk_results = self.hybrid_retriever.retrieve(
-                    query_embedding=query_embedding, query_text=question,
+                    query_embedding=query_embedding, query_text=effective_question,
                     top_k=k, filters=filters,
                 )
             else:
@@ -482,8 +595,8 @@ class QueryPipeline:
                     query=question, documents=chunk_results,
                     top_k=self.top_k * 2,
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"Reranker 失败，使用原始排序: {e}")
 
         context_docs = self._merge_chunks(chunk_results)
         sources = self._build_sources(context_docs)
@@ -575,7 +688,7 @@ class QueryPipeline:
             "你是一个证券清算与技术领域的专业问答助手。请基于以下检索到的文档片段回答用户的问题。\n\n"
             "要求：\n"
             "1. 只基于检索到的文档内容回答，不要编造信息\n"
-            "2. 如果文档内容不足以回答问题，明确说明'根据现有知识库内容，无法完整回答此问题'\n"
+            "2. 若无任何片段支撑该问题，必须仅回复'根据现有知识库无法回答该问题'，不得拼凑\n"
             "3. 在回答中标注引用来源，格式为 [来源:文件名]\n"
             "4. 对于涉及金额、日期、规则编号的具体信息，确保准确无误"
         )
@@ -610,6 +723,42 @@ class QueryPipeline:
         else:
             from qa.pipelines.components.embedder import embed_query
             return embed_query(question)
+
+    def _retrieve_chunks(
+        self,
+        query_embedding: list[float],
+        query_text: str,
+        top_k: int,
+        filters: dict | None = None,
+    ) -> list[Document]:
+        """嵌入向量检索（混合或纯向量）
+
+        供多意图分解的子问题分别检索使用。
+        """
+        if self.hybrid_retriever is not None:
+            return self.hybrid_retriever.retrieve(
+                query_embedding=query_embedding,
+                query_text=query_text,
+                top_k=top_k,
+                filters=filters,
+            )
+        return self.store_manager.retrieve(
+            query_embedding=query_embedding,
+            top_k=top_k,
+            filters=filters,
+        )
+
+    @staticmethod
+    def _is_low_risk_context(context_docs: list[Document]) -> bool:
+        """判断是否为低风险场景（可跳过 Faithfulness 校验）
+
+        低风险条件：检索结果的最高分 ≥ 0.95（表示高度相关）
+        标准答案场景由 Early Exit 提前处理。
+        """
+        if not context_docs:
+            return True
+        max_score = max((d.score or 0.0) for d in context_docs)
+        return max_score >= 0.95
 
     def _merge_chunks(self, chunks: list[Document]) -> list[Document]:
         """合并检索到的小块 → 获取父级大块
@@ -750,7 +899,7 @@ class QueryPipeline:
             f"{history_section}\n\n"
             "要求：\n"
             "1. 只基于检索到的文档内容回答，不要编造信息\n"
-            "2. 如果文档内容不足以回答问题，明确说明'根据现有知识库内容，无法完整回答此问题'\n"
+            "2. 若无任何片段支撑该问题，必须仅回复'根据现有知识库无法回答该问题'，不得拼凑\n"
             "3. 在回答中标注引用来源，格式为 [来源:文件名]\n"
             "4. 对于涉及金额、日期、规则编号的具体信息，确保准确无误\n"
             "5. 回答时可以利用对话历史中的上下文，但不要重复对话历史中的内容"

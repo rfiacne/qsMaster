@@ -56,6 +56,7 @@ def ask(
             enabled=True,
             threshold=settings.faithfulness.threshold,
             max_claims=settings.faithfulness.max_claims,
+            judge_model=settings.faithfulness.judge_model,
         )
 
     # 初始化审核队列
