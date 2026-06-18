@@ -159,7 +159,7 @@ class TestHybridRetrieverInit:
     def test_default_params(self):
         hybrid = HybridRetriever(store_manager=FakeStoreManager())
         assert hybrid.vector_weight == 0.5
-        assert hybrid.rrf_k == 60
+        assert hybrid.rrf_k == 35  # M6: 默认从 60 改为 35，提升排序区分度
         assert hybrid.top_k == 10
 
     def test_custom_params(self):

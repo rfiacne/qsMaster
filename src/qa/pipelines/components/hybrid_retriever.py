@@ -3,6 +3,11 @@
 
 使用 RRF（Reciprocal Rank Fusion）算法融合两种检索结果，
 兼顾证券清算文档中精确匹配（条文编号、日期、金额）和语义匹配。
+
+M6 增强：
+- BM25 改为全量持久化索引（GlobalBM25Index），消除每请求 O(n) 重建
+- RRF k 可配置（默认 35），提升排序区分度
+- 展示分数改为归一化 RRF 分数（FR-004）
 """
 
 from __future__ import annotations
@@ -12,13 +17,15 @@ import time
 
 from haystack import Document
 
+from qa.pipelines.components.bm25_index import GlobalBM25Index, _tokenize
+
 logger = logging.getLogger(__name__)
 
 
 class HybridRetriever:
     """混合检索器
 
-    同时执行 BM25 关键词检索和向量语义检索，
+    同时执行 BM25 关键词检索（全量持久化索引）和向量语义检索，
     用 RRF 算法融合排序。
 
     RRF 公式: score(d) = 1/(k + rank_v(d)) + 1/(k + rank_b(d))
@@ -29,53 +36,32 @@ class HybridRetriever:
         self,
         store_manager,
         vector_weight: float = 0.5,
-        rrf_k: int = 60,
+        rrf_k: int = 35,
         top_k: int = 10,
         pg_retriever=None,
+        bm25_index: GlobalBM25Index | None = None,
     ):
         """
         Args:
             store_manager: StoreManager 实例（含 chunk_store）
             vector_weight: 向量检索权重 (0-1)，剩余为 BM25 权重
-            rrf_k: RRF 常数，越大排名越平滑
+            rrf_k: RRF 常数，越小排名区分度越大（默认 35，M6 优化值）
             top_k: 最终返回结果数
             pg_retriever: PgFullTextRetriever 实例（可选，替代 BM25）
+            bm25_index: 全量 BM25 索引（GlobalBM25Index），
+                        若未提供则回退到 PG 或向量-only 检索
         """
         self.store_manager = store_manager
         self.vector_weight = max(0.0, min(1.0, vector_weight))
         self.rrf_k = rrf_k
         self.top_k = top_k
         self.pg_retriever = pg_retriever
-        self._bm25_index = None
-        self._bm25_docs: list[str] = []
+        self.bm25_index = bm25_index
 
-    def _build_bm25_index(self, docs: list[Document]) -> None:
-        """构建 BM25 索引（按需，只构建一次）"""
-        if self._bm25_index is not None:
-            return
-
-        from rank_bm25 import BM25Okapi
-
-        tokenized = [self._tokenize(d.content or "") for d in docs]
-        self._bm25_index = BM25Okapi(tokenized)
-        self._bm25_docs = [d.content or "" for d in docs]
-        logger.info(f"BM25 索引构建完成: {len(docs)} 文档")
-
-    def _tokenize(self, text: str) -> list[str]:
-        """分词（中文按字/词切分，英文按空格）"""
-        import re
-        # 中文按字符切分，英文按单词
-        tokens = []
-        for part in re.split(r"(\s+)", text):
-            if not part.strip():
-                continue
-            # 中文部分：逐字符
-            if any("\u4e00" <= c <= "\u9fff" for c in part):
-                tokens.extend(list(part.strip()))
-            else:
-                # 英文/数字：按空格和标点
-                tokens.extend(re.findall(r"[a-zA-Z0-9]+", part.lower()))
-        return tokens
+    # 保留 _tokenize 供外部测试调用（委托给 bm25_index 的同名函数）
+    @staticmethod
+    def _tokenize(text: str) -> list[str]:
+        return _tokenize(text)
 
     def retrieve(
         self,
@@ -86,9 +72,11 @@ class HybridRetriever:
     ) -> list[Document]:
         """混合检索
 
-        1. 向量检索（语义匹配）
-        2. BM25 检索（关键词精确匹配）
-        3. RRF 融合排序
+        1. 向量检索（语义匹配）— 从 chunk_store 检索
+        2. BM25 检索（关键词精确匹配）— 从全量持久化索引检索
+        3. PG 全文检索（可选，优先于 BM25）
+        4. RRF 融合排序
+        5. 展示分数归一化
         """
         k = top_k or self.top_k
         t0 = time.time()
@@ -96,116 +84,145 @@ class HybridRetriever:
         # ── 向量检索 ──
         vector_results = self.store_manager.retrieve(
             query_embedding=query_embedding,
-            top_k=max(k * 3, 30),  # 多取一些给 RRF 融合
+            top_k=max(k * 3, 30),
             filters=filters,
         )
 
         if not vector_results:
             logger.info("混合检索: 向量检索无结果")
+            # 即使向量无结果，仍尝试 BM25 全量检索
+            if self.bm25_index is not None and self.bm25_index.is_built:
+                bm25_results = self.bm25_index.retrieve(query_text, top_k=k)
+                if bm25_results:
+                    logger.info(
+                        f"混合检索: BM25 补充 {len(bm25_results)} 结果"
+                    )
+                    return bm25_results
             return []
 
-        # ── 全文检索（PG 优先，BM25 降级） ──
-        bm25_scores: list[float] = []
-        pg_results = None
+        # ── 全量 BM25 检索（独立于向量结果） ──
+        bm25_docs: list[Document] = []
+        if self.bm25_index is not None and self.bm25_index.is_built:
+            bm25_docs = self.bm25_index.retrieve(
+                query_text, top_k=max(k * 3, 30)
+            )
+            logger.info(
+                f"全量 BM25 检索: {len(bm25_docs)} 结果"
+            )
 
+        # ── PG 全文检索（可选，优先于 BM25） ──
+        pg_text_map: dict[str, float] = {}
         if self.pg_retriever is not None and self.pg_retriever.available:
-            pg_results = self.pg_retriever.search(query_text, top_k=max(k * 3, 30))
-            if pg_results is not None:
-                # 构建 PG 分数映射：优先按 content 精确匹配对齐，
-                # 因为 PG 的 id 与 turbovec Document.id 可能不同源
-                pg_text_scores: list[float] = [0.0] * len(vector_results)
-                pg_text_map: dict[str, float] = {}
-                for r in pg_results:
-                    # 使用 content 前 100 字符作为匹配键（避免全文比较）
-                    content_key = (r.get("content") or "")[:100]
-                    if content_key:
-                        pg_text_map[content_key] = max(
-                            pg_text_map.get(content_key, 0.0), r["score"]
-                        )
-                for i, doc in enumerate(vector_results):
-                    content_key = (doc.content or "")[:100]
-                    if content_key and content_key in pg_text_map:
-                        pg_text_scores[i] = pg_text_map[content_key]
-                bm25_scores = pg_text_scores
-                pg_match_count = sum(1 for s in bm25_scores if s > 0)
-                logger.info(f"全文检索(PG): {len(pg_results)} 结果, {pg_match_count} 匹配")
-            else:
-                logger.info("PG 不可用，降级到 BM25")
-
-        if not bm25_scores:
-            # 降级到 BM25
-            self._build_bm25_index(vector_results)
-            if self._bm25_index:
-                query_tokens = self._tokenize(query_text)
-                if query_tokens:
-                    raw_scores = self._bm25_index.get_scores(query_tokens)
-                    bm25_scores = (
-                        raw_scores.tolist()
-                        if hasattr(raw_scores, 'tolist')
-                        else list(raw_scores)
+            try:
+                pg_results = self.pg_retriever.search(
+                    query_text, top_k=max(k * 3, 30)
+                )
+                if pg_results:
+                    for r in pg_results:
+                        content_key = (r.get("content") or "")[:100]
+                        if content_key:
+                            pg_text_map[content_key] = max(
+                                pg_text_map.get(content_key, 0.0),
+                                r["score"],
+                            )
+                    logger.info(
+                        f"全文检索(PG): {len(pg_results)} 结果"
                     )
+            except Exception as e:
+                logger.warning(f"PG 检索异常，跳过: {e}")
+
+        # ── 合并向量与 BM25 候选集 ──
+        # 以向量结果为基准，构建 id→doc 映射
+        all_candidates: dict[str, tuple[int, Document]] = {}
+        for i, doc in enumerate(vector_results):
+            doc_id = doc.id or f"v_{i}"
+            all_candidates[doc_id] = (i, doc)
+
+        # 补充 BM25 结果中不在向量结果中的文档
+        bm25_only_indices: list[int] = []
+        for bm25_doc in bm25_docs:
+            doc_id = bm25_doc.id or ""
+            if doc_id and doc_id not in all_candidates:
+                idx = len(vector_results) + len(bm25_only_indices)
+                all_candidates[doc_id] = (idx, bm25_doc)
+                bm25_only_indices.append(idx)
 
         # ── RRF 融合 ──
-        # 向量排名
-        vec_rank = {d.id or f"_{i}": i for i, d in enumerate(vector_results)}
+        vec_rank: dict[str, int] = {}
+        for i, doc in enumerate(vector_results):
+            doc_id = doc.id or f"v_{i}"
+            vec_rank[doc_id] = i
 
-        # BM25 排名（按 BM25 分数排序）
+        # BM25 排名（基于全量 BM25 结果）
         bm25_rank: dict[str, int] = {}
-        if bm25_scores:
-            bm25_sorted = sorted(
-                enumerate(bm25_scores), key=lambda x: -x[1]
-            )
-            for rank_idx, (doc_idx, _score) in enumerate(bm25_sorted):
-                doc_id = vector_results[doc_idx].id or f"_{doc_idx}"
+        for rank_idx, bm25_doc in enumerate(bm25_docs):
+            doc_id = bm25_doc.id or ""
+            if doc_id:
                 bm25_rank[doc_id] = rank_idx
 
+        # PG 排名（基于 content 匹配，覆盖 BM25 排名）
+        if pg_text_map:
+            pg_scores_list: list[float] = []
+            for doc_id, (idx, doc) in all_candidates.items():
+                content_key = (doc.content or "")[:100]
+                if content_key and content_key in pg_text_map:
+                    pg_scores_list.append(pg_text_map[content_key])
+                else:
+                    pg_scores_list.append(0.0)
+            if any(s > 0 for s in pg_scores_list):
+                pg_sorted = sorted(
+                    enumerate(pg_scores_list), key=lambda x: -x[1]
+                )
+                for rank_idx, (candidate_idx, _) in enumerate(pg_sorted):
+                    doc_id = list(all_candidates.keys())[candidate_idx]
+                    bm25_rank[doc_id] = rank_idx
+
         # 计算 RRF 分数
-        rrf_scores: list[tuple[int, float]] = []
-        for i, doc in enumerate(vector_results):
-            doc_id = doc.id or f"_{i}"
+        rrf_scores: list[tuple[str, float]] = []
+        for doc_id, (idx, doc) in all_candidates.items():
             v_rank = vec_rank.get(doc_id, k * 10)
             b_rank = bm25_rank.get(doc_id, k * 10)
 
             v_score = 1.0 / (self.rrf_k + v_rank + 1)
             b_score = 1.0 / (self.rrf_k + b_rank + 1)
 
-            # 加权融合
             fused = self.vector_weight * v_score + (1 - self.vector_weight) * b_score
-            rrf_scores.append((i, fused))
+            rrf_scores.append((doc_id, fused))
 
         # 按融合分数排序
         rrf_scores.sort(key=lambda x: -x[1])
 
-        # 取 top_k
-        top_indices = [idx for idx, _score in rrf_scores[:k]]
+        # 取 top_k（结果直接用于下方构建）
 
         # ── 来源类型标注（FR-005） ──
-        # 判断每个文档在纯向量检索和纯 BM25 检索中是否在各自 top_k 内
-        vec_top_set: set = set()
+        vec_top_set: set[str] = set()
         for i, d in enumerate(vector_results):
             if i < k:
-                vec_top_set.add(d.id)
+                doc_id = d.id or f"v_{i}"
+                vec_top_set.add(doc_id)
 
-        bm25_top_set: set = set()
-        if bm25_scores:
-            bm25_sorted_idx = sorted(
-                range(len(bm25_scores)), key=lambda i: -bm25_scores[i]
-            )
-            for rank_idx, doc_idx in enumerate(bm25_sorted_idx):
-                if rank_idx < k:
-                    doc_id = vector_results[doc_idx].id or f"_{doc_idx}"
+        bm25_top_set: set[str] = set()
+        for rank_idx, bm25_doc in enumerate(bm25_docs):
+            if rank_idx < k:
+                doc_id = bm25_doc.id or ""
+                if doc_id:
                     bm25_top_set.add(doc_id)
 
-        # 构建结果：RRF 分数仅用于排序，显示用向量余弦相似度
+        # 找最大 RRF 分数用于归一化
+        max_rrf = max((s for _, s in rrf_scores[:k]), default=1.0)
+        if max_rrf <= 0:
+            max_rrf = 1.0
+
+        # 构建结果
         import dataclasses
-        results = []
-        for rank, idx in enumerate(top_indices):
-            doc = vector_results[idx]
-            doc_id = doc.id or f"_{idx}"
-            vec_score = doc.score or 0.0
+
+        results: list[Document] = []
+        for rank, (doc_id, rrf_score) in enumerate(rrf_scores[:k]):
+            idx, doc = all_candidates[doc_id]
             meta = dict(doc.meta or {})
-            meta["hybrid_score"] = round(rrf_scores[rank][1], 4)
-            meta["vec_score"] = round(vec_score, 4)
+            meta["hybrid_score"] = round(rrf_score, 4)
+            meta["vec_score"] = round(doc.score or 0.0, 4)
+
             # 来源类型标注
             in_vec = doc_id in vec_top_set
             in_bm25 = doc_id in bm25_top_set
@@ -216,9 +233,10 @@ class HybridRetriever:
             elif in_bm25:
                 meta["source_type"] = "bm25"
             else:
-                meta["source_type"] = "hybrid"  # RRF 融合到 top_k 也算融合
-            # 用向量余弦相似度作为展示分数（0~1，用户可理解），RRF 只用于排名
-            display_score = vec_score
+                meta["source_type"] = "hybrid"
+
+            # FR-004: 展示分数改为归一化 RRF 分数
+            display_score = rrf_score / max_rrf
             doc = dataclasses.replace(doc, score=display_score, meta=meta)
             results.append(doc)
 
@@ -226,6 +244,8 @@ class HybridRetriever:
         logger.info(
             f"混合检索完成: {len(results)} 结果, "
             f"融合权重 vec={self.vector_weight}, "
+            f"rrf_k={self.rrf_k}, "
+            f"BM25 全量={len(bm25_docs)}, "
             f"耗时 {elapsed:.0f}ms"
         )
 

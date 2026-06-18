@@ -34,6 +34,7 @@ retrieval:
   min_score: 0.1           # 检索结果最低分数（低于此不显示）
   use_hybrid: true          # 使用混合检索（BM25 + 向量）
   hybrid_vector_weight: 0.5 # 向量检索权重 (0-1)，剩余为 BM25 权重
+  rrf_k: 35                 # M6: RRF 融合常数，越小排序区分度越大
   block_sizes:
     - 500
     - 100
@@ -43,7 +44,7 @@ indexing:
   ocr_enabled: false
 
 rerank:
-  enabled: false                # 启用 Reranker 精排（cross-encoder 二次打分）
+  enabled: true                 # M6: 默认启用 Reranker 精排（cross-encoder 二次打分）
   api_base_url: ""              # 空则复用 embedding.api_base_url
   api_key: ""                   # 空则复用 embedding 或 llm 的 key
   api_key_env: ""
@@ -65,8 +66,9 @@ early_exit:
 faithfulness:
   enabled: true               # 启用 LLM 生成后自动校验
   mode: "llm"                 # 校验模式: llm | disabled
-  threshold: 0.5              # 通过阈值：支撑比例 >= 此值 PASS，< 此值 FAIL
+  threshold: 0.7              # M6: 通过阈值（从 0.5 提升至 0.7）
   max_claims: 10              # 每次最多校验的声明数
+  judge_model: ""             # M6: 校验用独立模型名（空则复用 LLM 主模型）
 
 # ── M2: PostgreSQL 全文检索 ─────────────────────────────
 pg:
@@ -84,3 +86,16 @@ otel:
   enabled: false              # 启用 OpenTelemetry 链路追踪
   endpoint: ""                # OTLP HTTP 端点（如 http://otel-collector:4318）
   service_name: "securities-qa-agent"
+
+# ── M6: 查询改写 ────────────────────────────────────────
+query_rewrite:
+  enabled: true               # 启用查询改写（术语归一化 + 多意图分解）
+  model: ""                   # 改写用模型（空则复用 LLM 主模型）
+  timeout_seconds: 3.0        # LLM 改写调用超时（秒）
+  term_map_path: "./data/term_map.json"  # 术语映射表路径（证券简称→全称）
+
+# ── M6: 查询缓存 ────────────────────────────────────────
+query_cache:
+  enabled: true               # 启用查询级 LRU 缓存
+  max_size: 256               # LRU 缓存最大条目数
+  ttl_seconds: 300            # 缓存 TTL（秒，默认 5 分钟）

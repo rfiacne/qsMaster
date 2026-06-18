@@ -15,8 +15,14 @@ QueryPipeline
   ├── EarlyExitMatcher  ← 标准答案库 (JSON)
   │   ├─ 精确匹配 (字符串标准化)
   │   └─ 模糊匹配 (嵌入余弦相似度, 阈值可配)
+  ├── QueryCache (LRU + TTL, Early Exit 之后检查)
+  ├── QueryRewriter (术语归一化 + 多意图分解, 嵌入前)
   ├── Embedding (远程 API / 本地模型 / 自动回退)
-  ├── HybridRetriever (向量检索 + BM25/PostgreSQL RRF 融合)
+  ├── HybridRetriever (向量检索 + 全量持久化 BM25/PG RRF 融合)
+  ├── Reranker (Cross-encoder 精排)
+  ├── LLM Generator (流式/非流式, 注入对话历史)
+  ├── QueryRewriter (术语归一化 + 多意图分解)
+  ├── HybridRetriever (向量检索 + 全量持久化 BM25/PG RRF 融合)
   ├── Reranker (Cross-encoder 精排)
   ├── LLM Generator (流式/非流式, 注入对话历史)
   └── FaithfulnessEvaluator (LLM-as-judge 声明级校验)
@@ -128,6 +134,8 @@ python -m pytest tests/unit/ && python -m pytest tests/integration/
 | `rerank` | Reranker 精排 | `QA_RERANK_` |
 | `early_exit` | 标准答案匹配 | `QA_EARLY_EXIT_` |
 | `faithfulness` | 防幻觉校验 | `QA_FAITHFULNESS_` |
+| `query_rewrite` | 查询改写（M6） | `QA_QUERY_REWRITE_` |
+| `query_cache` | 查询缓存（M6） | `QA_QUERY_CACHE_` |
 | `pg` | PostgreSQL 全文检索 | `QA_PG_` |
 | `otel` | OpenTelemetry | `QA_OTEL_` |
 
@@ -162,6 +170,9 @@ src/qa/
 │       ├── early_exit.py      # 标准答案库 + 匹配器
 │       ├── faithfulness.py    # LLM-as-judge 防幻觉
 │       ├── hybrid_retriever.py # 向量+BM25/PG RRF 融合
+│       ├── bm25_index.py      # M6: 全量 BM25 索引构建/持久化/版本化加载
+│       ├── query_rewriter.py  # M6: 术语归一化 + 多意图分解
+│       ├── query_cache.py     # M6: LRU 查询缓存
 │       ├── reranker.py        # Cross-encoder 精排
 │       ├── review_queue.py    # 审核队列 + 语义匹配入库
 │       ├── session_store.py   # 持久化会话
@@ -188,3 +199,4 @@ tests/
 | M3 | 标准答案别名/状态/审计 + 审核工作流 + 语义匹配入库 | ✅ |
 | M4 | 持久化多轮会话 + 审计日志 + OpenTelemetry 可观测性 | ✅ |
 | M5 | Web 前端管理 + SSE 流式 + 管理 API | ✅ |
+| M6 | 相关性增强（BM25 全量化/Reranker 默认开/查询改写/防幻觉强化） + 前端美观性 + 性能优化（缓存/预热/并行/批量嵌入） | ✅ |

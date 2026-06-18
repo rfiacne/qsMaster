@@ -297,6 +297,37 @@ body {
 }
 .message-body pre code { background: none; padding: 0; font-size: 13px; }
 
+/* ── Prose: tables ── */
+.message-body table {
+  border-collapse: collapse; width: 100%; margin-bottom: 10px;
+  font-size: 13px; line-height: 1.5;
+}
+.message-body th, .message-body td {
+  border: 1px solid var(--border-color);
+  padding: 8px 10px; text-align: left;
+}
+.message-body th {
+  background: var(--primary-bg); color: var(--text-primary);
+  font-weight: 600;
+}
+.message-body tr:nth-child(even) { background: #f8f9fb; }
+.message-body tr:hover { background: #f0f2f5; }
+
+/* ── Prose: headings ── */
+.message-body h1 { font-size: 18px; margin: 16px 0 8px; font-weight: 700; color: var(--text-primary); }
+.message-body h2 { font-size: 16px; margin: 14px 0 6px; font-weight: 700; color: var(--text-primary); }
+.message-body h3 { font-size: 15px; margin: 12px 0 4px; font-weight: 600; color: var(--text-primary); }
+
+/* ── Prose: blockquote, strong, hr ── */
+.message-body blockquote {
+  border-left: 3px solid var(--primary-light);
+  padding: 6px 12px; margin: 8px 0;
+  background: var(--primary-bg); border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  color: var(--text-secondary); font-size: 13px;
+}
+.message-body strong { font-weight: 700; color: var(--text-primary); }
+.message-body hr { border: none; border-top: 1px solid var(--border-light); margin: 12px 0; }
+
 .typing-cursor {
   display: inline-block; width: 2px; height: 1em;
   background: var(--primary); margin-left: 2px;
@@ -341,6 +372,25 @@ body {
   border-left: 3px solid var(--primary-light);
 }
 .source-item.expanded .source-content { display: block; }
+.source-item.highlight { border-left: 3px solid var(--primary); background: var(--primary-subtle) !important; }
+
+/* ── Citation cites ── */
+.message-body cite {
+  color: var(--primary); cursor: pointer; font-style: normal;
+  border-bottom: 1px dotted var(--primary-light);
+  padding: 0 2px; transition: background .15s;
+}
+.message-body cite:hover { background: var(--primary-bg); border-radius: 2px; }
+
+/* ── Faithfulness Badge ── */
+.faithfulness-badge {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 11px; padding: 2px 8px; border-radius: 10px;
+  margin-top: 8px; font-weight: 500;
+}
+.faithfulness-badge.pass { background: var(--success-bg); color: var(--success); border: 1px solid var(--success); }
+.faithfulness-badge.partial { background: var(--warning-bg); color: var(--warning); border: 1px solid var(--warning); }
+.faithfulness-badge.fail { background: var(--error-bg); color: var(--error); border: 1px solid var(--error); }
 
 /* ── Status / Error ── */
 .status-msg {
@@ -1267,6 +1317,63 @@ function addMessage(role, content, sources) {
   return msg;
 }
 
+// ── Markdown 渲染（统一 GFM 配置） ──
+function renderMarkdown(text) {
+  return marked.parse(text, { breaks: true, gfm: true });
+}
+
+// ── 引用后处理 ──
+function processCitations(html, sources) {
+  if (!sources || sources.length === 0) return html;
+  // 优先匹配 [来源:文件名] 格式
+  html = html.replace(/\[来源:\s*([^\]]+)\]/g, (match, fileName) => {
+    const idx = sources.findIndex(s => s.file_name === fileName.trim());
+    if (idx >= 0) return `<cite data-source-idx="${idx}" onclick="focusSource(this, ${idx})">${escHtml(fileName.trim())}</cite>`;
+    return match;
+  });
+  // 再匹配 [文件名] 格式（仅文件名长度 ≥ 3 字符）
+  html = html.replace(/\[([^\]]{3,})\]/g, (match, fileName) => {
+    // 跳过已处理的 [来源:xxx]
+    if (match.startsWith('[来源:')) return match;
+    const idx = sources.findIndex(s => s.file_name === fileName.trim());
+    if (idx >= 0) return `<cite data-source-idx="${idx}" onclick="focusSource(this, ${idx})">${escHtml(fileName.trim())}</cite>`;
+    return match;
+  });
+  return html;
+}
+
+function focusSource(el, idx) {
+  // 找到对应的 message 容器
+  const msgEl = el.closest('.message');
+  if (!msgEl) return;
+  // 展开 sources-section
+  const sourcesList = msgEl.querySelector('.sources-list');
+  const sourcesToggle = msgEl.querySelector('.sources-toggle');
+  if (sourcesList && sourcesToggle) {
+    sourcesList.style.display = 'block';
+    const arrow = sourcesToggle.querySelector('span:last-child');
+    if (arrow) arrow.textContent = '▲';
+  }
+  // 高亮对应的 source-item
+  const items = msgEl.querySelectorAll('.source-item');
+  items.forEach(item => item.classList.remove('highlight'));
+  if (items[idx]) {
+    items[idx].classList.add('highlight');
+    items[idx].classList.add('expanded');
+    items[idx].scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+}
+
+// ── Faithfulness 可信度徽章 ──
+function renderFaithfulnessBadge(faithfulness) {
+  if (!faithfulness || !faithfulness.result) return '';
+  const result = faithfulness.result;
+  const score = faithfulness.score || 0;
+  const labels = { pass: '✅ 可信', partial: '⚠️ 部分可信', fail: '❌ 不可信', skipped: 'ℹ️ 未校验' };
+  const label = labels[result] || result;
+  return `<div class="faithfulness-badge ${result}">${label} (${(score*100).toFixed(0)}%)</div>`;
+}
+
 function renderMessage(msg) {
   hideEmptyState();
   const div = document.createElement('div');
@@ -1292,7 +1399,7 @@ function renderMessage(msg) {
     </div>`;
   }
   div.innerHTML = `<div class="message-header"><span class="message-avatar ${msg.role}">${avatar}</span><span class="message-author">${author}</span><span class="message-time">${msg.timestamp}</span></div>
-    <div class="message-body">${marked.parse(msg.content)}</div>${sourcesHTML}`;
+    <div class="message-body">${renderMarkdown(msg.content)}</div>${sourcesHTML}`;
   messagesContainer.appendChild(div);
 }
 
@@ -1308,7 +1415,7 @@ function toggleSources(btn) {
 
 function appendStreamingContent(msgId, text) {
   const el = document.querySelector(`#msg-${msgId} .message-body`);
-  if (el) el.innerHTML = marked.parse(text);
+  if (el) el.innerHTML = renderMarkdown(text);
   scrollToBottom();
 }
 
@@ -1332,15 +1439,33 @@ function showError(code, message, retryFn) {
 
 function updateStreamingContent(msgId, content) {
   const body = document.querySelector(`#msg-${msgId} .message-body`);
-  if (body) body.innerHTML = marked.parse(content) + '<span class="streaming-cursor">▌</span>';
+  if (body) body.innerHTML = renderMarkdown(content) + '<span class="streaming-cursor">▌</span>';
   scrollToBottom();
 }
 
-function finalizeMessage(msgId, content, sources) {
+function getFileIcon(fileName) {
+  const ext = (fileName||'').split('.').pop().toLowerCase();
+  const icons = { pdf:'📄', doc:'📝', docx:'📝', md:'📋', html:'🌐', xls:'📊', xlsx:'📊', csv:'📋', txt:'📄', json:'📋', xml:'📋', default:'📄' };
+  return icons[ext] || icons.default;
+}
+
+function renderScoreStars(score) {
+  const pct = Math.min(100, Math.max(0, Math.round((score||0)*100)));
+  if (score >= 0.8) return `⭐⭐⭐ ${pct}%`;
+  if (score >= 0.5) return `⭐⭐ ${pct}%`;
+  return `⭐ ${pct}%`;
+}
+
+function finalizeMessage(msgId, content, sources, faithfulness) {
   const el = document.getElementById('msg-' + msgId);
   if (!el) return;
   const body = el.querySelector('.message-body');
-  if (body) body.innerHTML = marked.parse(content);
+  if (body) {
+    let html = renderMarkdown(content);
+    html = processCitations(html, sources);
+    if (faithfulness) html += renderFaithfulnessBadge(faithfulness);
+    body.innerHTML = html;
+  }
   // 重新渲染 sources（替换占位）
   const existingSources = el.querySelector('.sources-section');
   if (existingSources) existingSources.remove();
@@ -1348,9 +1473,10 @@ function finalizeMessage(msgId, content, sources) {
     const items = sources.map((s,i) => `
       <div class="source-item" onclick="this.classList.toggle('expanded')">
         <span class="source-badge">${i+1}</span>
+        ${getFileIcon(s.file_name)}
         <span class="source-title">${escHtml(s.file_name||'unknown')}</span>
-        <span class="source-score">${(s.score||0).toFixed(3)}</span>
-        <div class="source-content">${escHtml(s.content||'')}</div>
+        <span class="source-score">${renderScoreStars(s.score)}</span>
+        <div class="source-content">${escHtml((s.content||'').substring(0,200))}${(s.content||'').length > 200 ? '<br><button onclick="event.stopPropagation();this.parentElement.querySelector(\'.full-text\').style.display=\'block\';this.style.display=\'none\'">展开全文</button><div class="full-text" style="display:none">'+escHtml(s.content.substring(200))+'</div>' : ''}</div>
       </div>`).join('');
     const sourcesHTML = `<div class="sources-section">
       <div class="sources-toggle" onclick="toggleSources(this)">📚 <span>${sources.length} 个引用来源</span><span style="font-size:10px;margin-left:4px;">▼</span></div>
@@ -1374,6 +1500,7 @@ async function submitQuestion(question) {
   const placeholderMsg = addMessage('assistant', '<em>正在生成回答...</em>', []);
   let fullAnswer = '';
   let finalSources = [];
+  let finalFaithfulness = null;
 
   try {
     await new Promise((resolve, reject) => {
@@ -1387,9 +1514,7 @@ async function submitQuestion(question) {
           finalSources = sources;
         },
         onFaithfulness: (data) => {
-          if (data.result === 'fail') {
-            fullAnswer += '\n\n> ⚠️ 系统提示：以上回答部分内容可能无检索支撑，请注意甄别。';
-          }
+          finalFaithfulness = data;
         },
         onDone: (data) => {
           resolve(data);
@@ -1401,7 +1526,7 @@ async function submitQuestion(question) {
     });
 
     if (!fullAnswer) fullAnswer = '根据现有知识库内容，无法完整回答此问题。';
-    finalizeMessage(placeholderMsg.id, fullAnswer, finalSources);
+    finalizeMessage(placeholderMsg.id, fullAnswer, finalSources, finalFaithfulness);
     state.messages[state.messages.length-1].content = fullAnswer;
     state.messages[state.messages.length-1].sources = finalSources;
     saveToHistory(question, fullAnswer, finalSources);

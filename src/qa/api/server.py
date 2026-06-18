@@ -106,6 +106,7 @@ def get_query_pipeline():
                 enabled=True,
                 threshold=settings.faithfulness.threshold,
                 max_claims=settings.faithfulness.max_claims,
+                judge_model=settings.faithfulness.judge_model,
             )
 
         # 初始化审核队列
@@ -150,6 +151,57 @@ def get_index_pipeline():
             ocr_enabled=settings.indexing.ocr_enabled,
         )
     return _index_pipeline
+
+
+# ─── Startup 预热 ─────────────────────────────────────
+
+
+@app.on_event("startup")
+async def warmup():
+    """服务启动预热
+
+    预加载 store、BM25 索引、embedder，消除首请求延迟尖峰。
+    预热失败不阻塞服务启动。
+    """
+    logger.info("🚀 服务启动预热中...")
+
+    # 1) 预热 Store（加载向量索引）
+    try:
+        store = get_store()
+        chunk_count = store.count_chunks()
+        logger.info(f"  ✅ Store 加载完成: {chunk_count} chunks")
+    except Exception as e:
+        logger.warning(f"  ⚠️ Store 预热失败（不阻塞启动）: {e}")
+
+    # 2) 预热 BM25 索引
+    try:
+        settings = get_settings()
+        if settings.retrieval.use_hybrid:
+            from qa.pipelines.components.bm25_index import load_or_build
+
+            store = get_store()
+            if store.count_chunks() > 0:
+                bm25_idx = load_or_build(store)
+                if bm25_idx.is_built:
+                    logger.info(f"  ✅ BM25 索引预热完成: {bm25_idx.total_docs} 文档")
+                else:
+                    logger.info("  ℹ️  BM25 索引未构建（知识库为空）")
+            else:
+                logger.info("  ℹ️  跳过 BM25 预热（知识库为空）")
+    except Exception as e:
+        logger.warning(f"  ⚠️ BM25 预热失败（不阻塞启动）: {e}")
+
+    # 3) 预热 Embedder
+    try:
+        from qa.pipelines.components.embedder import embed_query
+
+        test_emb = embed_query("预热测试")
+        if test_emb:
+            logger.info(f"  ✅ Embedder 预热完成: dim={len(test_emb)}")
+    except Exception as e:
+        logger.warning(f"  ⚠️ Embedder 预热失败（不阻塞启动）: {e}")
+
+    logger.info("🏁 服务启动预热完成")
 
 
 # ─── API 路由 ─────────────────────────────────────────
