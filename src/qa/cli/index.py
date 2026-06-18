@@ -137,6 +137,7 @@ def index(
         block_sizes=settings.retrieval.block_sizes,
         ocr_enabled=settings.indexing.ocr_enabled or ocr_backend != "none",
         ocr_backend=ocr_backend,
+        doc_timeout_sec=settings.indexing.doc_timeout_seconds,
     )
 
     # 带进度条执行索引

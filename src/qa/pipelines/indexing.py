@@ -57,11 +57,13 @@ class IndexingPipeline:
         block_sizes: list[int] | None = None,
         ocr_enabled: bool = False,
         ocr_backend: str = "auto",
+        doc_timeout_sec: float = 120.0,
     ):
         self.store_manager = store_manager
         self.embedder = embedder
         self.ocr_enabled = ocr_enabled
         self.ocr_backend = ocr_backend
+        self.doc_timeout_sec = doc_timeout_sec
 
         blocks = block_sizes or [500, 100]
         self.splitter = HierarchicalDocumentSplitter(
@@ -76,7 +78,7 @@ class IndexingPipeline:
         file_paths: list[str],
         meta: dict | None = None,
         skip_if_exists: bool = True,
-        doc_timeout_sec: float = 30.0,
+        doc_timeout_sec: float | None = None,
     ) -> IndexingResult:
         """执行索引流程
 
@@ -102,6 +104,7 @@ class IndexingPipeline:
 
         # ── 步骤1: 文件检测 & 转换（带逐文件超时） ──
         step = "文件转换"
+        doc_timeout_sec = doc_timeout_sec if doc_timeout_sec is not None else self.doc_timeout_sec
         logger.info(f"[步骤] {step}: 开始 ({len(file_paths)} 个文件, 超时={doc_timeout_sec}s/文件)")
         t_step = time.time()
 

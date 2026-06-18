@@ -191,6 +191,7 @@ def get_index_pipeline():
             store_manager=get_store(),
             block_sizes=settings.retrieval.block_sizes,
             ocr_enabled=settings.indexing.ocr_enabled,
+            doc_timeout_sec=settings.indexing.doc_timeout_seconds,
         )
     return _index_pipeline
 

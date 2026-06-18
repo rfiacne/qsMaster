@@ -42,6 +42,7 @@ retrieval:
 indexing:
   batch_size: 100
   ocr_enabled: false
+  doc_timeout_seconds: 120           # 单文档转换超时（秒，OCR 文档可能需要更长时间）
 
 rerank:
   enabled: true                 # M6: 默认启用 Reranker 精排（cross-encoder 二次打分）

@@ -175,6 +175,12 @@ class IndexingConfig(BaseSettings):
 
     batch_size: int = Field(default=100, ge=1, le=1000, description="批量索引大小")
     ocr_enabled: bool = Field(default=False, description="是否启用 OCR（扫描件）")
+    doc_timeout_seconds: int = Field(
+        default=120,
+        ge=10,
+        le=600,
+        description="单文档转换超时（秒，OCR 文档可能需要更长时间）",
+    )
 
 
 class RerankConfig(BaseSettings):
@@ -476,6 +482,7 @@ class Settings(BaseSettings):
             "indexing": {
                 "batch_size": self.indexing.batch_size,
                 "ocr_enabled": self.indexing.ocr_enabled,
+                "doc_timeout_seconds": self.indexing.doc_timeout_seconds,
             },
             "server": {
                 "host": self.server.host,
