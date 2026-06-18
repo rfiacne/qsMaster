@@ -143,4 +143,5 @@ Generator(model="gpt-4", api_base=internal_api)
 | LLM API 不可用 | LLM_UNAVAILABLE | "服务暂时不可用，请稍后重试" | 返回错误，不缓存不降级 |
 | Embedding API 不可用 | EMBEDDING_UNAVAILABLE | "服务暂时不可用，请稍后重试" | 返回错误，不缓存不降级 |
 | API 超时 | API_TIMEOUT | "请求超时，请稍后重试" | 返回错误，可配置超时阈值 |
+| 检索后端不可用 | RETRIEVAL_UNAVAILABLE | "检索服务暂时不可用" | 返回错误，区别于嵌入服务故障 |
 | 检索无结果 | 无 | 基于空上下文生成"无法找到相关信息" | 正常流程，LLM 生成兜底回答 |

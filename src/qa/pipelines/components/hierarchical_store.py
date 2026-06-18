@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from haystack import Document, component
 
@@ -46,10 +46,10 @@ class HierarchicalDocumentSplitter:
         self.overlap = overlap
 
     @component.output_types(
-        parents=List[Document],
-        chunks=List[Document],
+        parents=list[Document],
+        chunks=list[Document],
     )
-    def run(self, documents: List[Document]) -> Dict[str, List[Document]]:
+    def run(self, documents: list[Document]) -> dict[str, list[Document]]:
         """分割文档为 parent 和 chunk 两层
 
         Returns:
@@ -58,8 +58,8 @@ class HierarchicalDocumentSplitter:
                 "chunks": [Document, ...],     # Level 2 小块
             }
         """
-        parents: List[Document] = []
-        chunks: List[Document] = []
+        parents: list[Document] = []
+        chunks: list[Document] = []
 
         for doc in documents:
             text = doc.content or ""
@@ -106,7 +106,7 @@ class HierarchicalDocumentSplitter:
                     chunks.append(chunk_doc)
 
         # 为 parents 添加 children_ids
-        parent_children: Dict[str, List[str]] = {}
+        parent_children: dict[str, list[str]] = {}
         for chunk in chunks:
             pid = chunk.meta.get("parent_id") if chunk.meta else None
             if pid:
@@ -124,15 +124,25 @@ class HierarchicalDocumentSplitter:
 
         return {"parents": parents, "chunks": chunks}
 
-    def _split_text(self, text: str, chunk_size: int) -> List[str]:
+    def _split_text(self, text: str, chunk_size: int) -> list[str]:
         """按目标字符数分割文本（保留段落边界）"""
         if len(text) <= chunk_size:
             return [text]
 
-        chunks: List[str] = []
+        chunks: list[str] = []
         start = 0
+        max_iterations = 10000  # 安全计数器，防止死循环
+        iteration = 0
 
-        while start < len(text):
+        while start < len(text) and iteration < max_iterations:
+            iteration += 1
+            if iteration >= max_iterations:
+                logger.warning(f"_split_text 达到最大迭代次数 ({max_iterations})，强制终止")
+                remaining = text[start:].strip()
+                if remaining:
+                    chunks.append(remaining)
+                break
+
             # 在 chunk_size 范围内找最近的自然断点
             end = min(start + chunk_size, len(text))
 
@@ -180,9 +190,9 @@ class StoreWriter:
     )
     def run(
         self,
-        parents: List[Document],
-        chunks: List[Document],
-    ) -> Dict[str, Any]:
+        parents: list[Document],
+        chunks: list[Document],
+    ) -> dict[str, Any]:
         """写入分层的文档到向量存储"""
         from haystack.document_stores.types import DuplicatePolicy
 

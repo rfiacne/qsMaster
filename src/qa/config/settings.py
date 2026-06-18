@@ -10,7 +10,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import yaml
 from pydantic import Field, model_validator
@@ -27,7 +27,7 @@ class LLMConfig(BaseSettings):
         description="内部 OpenAI 兼容 API 地址",
     )
     model: str = Field(default="gpt-4", description="LLM 模型名称")
-    api_key: Optional[str] = Field(
+    api_key: str | None = Field(
         default=None,
         description="API 密钥（直接填入 config.yaml，优先级最高）",
     )
@@ -38,7 +38,7 @@ class LLMConfig(BaseSettings):
     timeout_seconds: int = Field(default=30, ge=1, le=300, description="API 超时阈值（秒）")
 
     @property
-    def resolved_api_key(self) -> Optional[str]:
+    def resolved_api_key(self) -> str | None:
         """获取实际 API 密钥
 
         优先级: api_key 直接值 > api_key_env 环境变量名 > api_key_env 直接值（兼容误用）
@@ -70,7 +70,7 @@ class EmbeddingConfig(BaseSettings):
     )
     model: str = Field(default="bge-m3", description="嵌入模型名称")
     dimensions: int = Field(default=1024, ge=128, le=8192, description="向量维度")
-    api_key: Optional[str] = Field(
+    api_key: str | None = Field(
         default=None,
         description="API 密钥（直接填入，优先级最高）",
     )
@@ -81,7 +81,7 @@ class EmbeddingConfig(BaseSettings):
     timeout_seconds: int = Field(default=30, ge=1, le=300, description="API 超时阈值（秒）")
 
     @property
-    def resolved_api_key(self) -> Optional[str]:
+    def resolved_api_key(self) -> str | None:
         """获取实际 API 密钥
 
         优先级: api_key 直接值 > api_key_env 环境变量名 > api_key_env 直接值（兼容误用）
@@ -114,16 +114,17 @@ class VectorStoreConfig(BaseSettings):
     )
 
     @model_validator(mode="after")
-    def validate_bit_width(self) -> "VectorStoreConfig":
+    def validate_bit_width(self) -> VectorStoreConfig:
         if self.bit_width not in (2, 4):
             raise ValueError(f"bit_width 必须为 2 或 4，当前值: {self.bit_width}")
         return self
 
     @model_validator(mode="after")
-    def validate_similarity(self) -> "VectorStoreConfig":
+    def validate_similarity(self) -> VectorStoreConfig:
         if self.similarity_function not in ("cosine", "dot_product"):
             raise ValueError(
-                f"similarity_function 必须为 'cosine' 或 'dot_product'，当前值: {self.similarity_function}"
+                "similarity_function 必须为 'cosine' 或 'dot_product'，"
+                f"当前值: {self.similarity_function}"
             )
         return self
 
@@ -149,7 +150,7 @@ class RetrievalConfig(BaseSettings):
         default=0.5, ge=0.0, le=1.0,
         description="混合检索中向量检索权重，越高越依赖语义",
     )
-    block_sizes: List[int] = Field(
+    block_sizes: list[int] = Field(
         default=[500, 100],
         description="分层分块大小（字符数），[大块大小, 小块大小]",
     )
@@ -177,7 +178,7 @@ class RerankConfig(BaseSettings):
         default="",
         description="Reranker API 地址（空则复用 embedding.api_base_url）",
     )
-    api_key: Optional[str] = Field(
+    api_key: str | None = Field(
         default=None,
         description="Reranker API 密钥（空则复用 embedding 或 llm 的 key）",
     )
@@ -195,7 +196,7 @@ class RerankConfig(BaseSettings):
     )
 
     @property
-    def resolved_api_key(self) -> Optional[str]:
+    def resolved_api_key(self) -> str | None:
         """获取实际 API 密钥"""
         if self.api_key:
             return self.api_key
@@ -218,6 +219,85 @@ class ServerConfig(BaseSettings):
     reload: bool = Field(default=False, description="开发模式：修改代码自动重启")
 
 
+class EarlyExitConfig(BaseSettings):
+    """Early Exit 配置"""
+
+    model_config = SettingsConfigDict(env_prefix="qa_early_exit_")
+
+    enabled: bool = Field(
+        default=True,
+        description="启用 Early Exit（标准答案库匹配优先）",
+    )
+    fuzzy_threshold: float = Field(
+        default=0.82, ge=0.0, le=1.0,
+        description="模糊匹配相似度阈值（低于此值不命中）",
+    )
+    store_path: str = Field(
+        default="./data/standard_answers",
+        description="标准答案库存储路径",
+    )
+
+
+class FaithfulnessConfig(BaseSettings):
+    """Faithfulness 校验配置"""
+
+    model_config = SettingsConfigDict(env_prefix="qa_faithfulness_")
+
+    enabled: bool = Field(
+        default=True,
+        description="启用 Faithfulness 校验（LLM 生成后自动校验）",
+    )
+    mode: str = Field(
+        default="llm",
+        description="校验模式: llm | disabled",
+    )
+    threshold: float = Field(
+        default=0.5, ge=0.0, le=1.0,
+        description="通过阈值：支撑比例 ≥ 此值算 PASS，< 此值算 FAIL",
+    )
+    max_claims: int = Field(
+        default=10, ge=1, le=30,
+        description="最多校验的声明数（超长回答截断）",
+    )
+
+
+class PgConfig(BaseSettings):
+    """PostgreSQL 全文检索配置"""
+
+    model_config = SettingsConfigDict(env_prefix="qa_pg_")
+
+    enabled: bool = Field(
+        default=False,
+        description="启用 PostgreSQL 全文检索（替代内存 BM25）",
+    )
+    host: str = Field(default="localhost", description="PG 主机")
+    port: int = Field(default=5432, ge=1, le=65535, description="PG 端口")
+    dbname: str = Field(default="qa", description="数据库名")
+    user: str = Field(default="qa", description="用户名")
+    password: str = Field(default="", description="密码")
+    min_conn: int = Field(default=1, ge=0, le=10, description="最小连接数")
+    max_conn: int = Field(default=5, ge=1, le=20, description="最大连接数")
+
+
+class OTelConfig(BaseSettings):
+    """OpenTelemetry 可观测性配置"""
+
+    model_config = SettingsConfigDict(env_prefix="qa_otel_")
+
+    enabled: bool = Field(
+        default=False,
+        description="启用 OpenTelemetry 链路追踪",
+    )
+    endpoint: str = Field(
+        default="",
+        description="OTLP HTTP 端点（如 http://otel-collector:4318）",
+    )
+    service_name: str = Field(
+        default="securities-qa-agent",
+        description="服务名称（用于 Trace 识别）",
+    )
+
+
 class Settings(BaseSettings):
     """应用全局配置"""
 
@@ -230,6 +310,10 @@ class Settings(BaseSettings):
     indexing: IndexingConfig = Field(default_factory=IndexingConfig)
     server: ServerConfig = Field(default_factory=ServerConfig)
     rerank: RerankConfig = Field(default_factory=RerankConfig)
+    early_exit: EarlyExitConfig = Field(default_factory=EarlyExitConfig)
+    faithfulness: FaithfulnessConfig = Field(default_factory=FaithfulnessConfig)
+    pg: PgConfig = Field(default_factory=PgConfig)
+    otel: OTelConfig = Field(default_factory=OTelConfig)
 
     # 配置文件路径
     config_path: str = Field(
@@ -238,7 +322,7 @@ class Settings(BaseSettings):
     )
 
     @classmethod
-    def load(cls, path: Optional[str] = None) -> "Settings":
+    def load(cls, path: str | None = None) -> Settings:
         """从 YAML 配置文件加载设置，缺失字段使用默认值"""
         instance = cls()
 
@@ -246,11 +330,14 @@ class Settings(BaseSettings):
         config_path = Path(config_file)
 
         if config_path.exists():
-            with open(config_path, "r", encoding="utf-8") as f:
+            with open(config_path, encoding="utf-8") as f:
                 raw = yaml.safe_load(f) or {}
 
             # 递归合并各 section
-            for section_key in ("llm", "embedding", "vector_store", "retrieval", "indexing", "server"):
+            for section_key in (
+                "llm", "embedding", "vector_store", "retrieval", "indexing",
+                "server", "rerank", "early_exit", "faithfulness", "pg", "otel",
+            ):
                 if section_key in raw:
                     section_data = raw[section_key]
                     section_config = getattr(instance, section_key)
@@ -260,7 +347,7 @@ class Settings(BaseSettings):
 
         return instance
 
-    def as_dict(self) -> Dict[str, Any]:
+    def as_dict(self) -> dict[str, Any]:
         """转字典（用于展示）"""
         return {
             "llm": {
@@ -309,14 +396,36 @@ class Settings(BaseSettings):
                 "model": self.rerank.model,
                 "top_k": self.rerank.top_k,
             },
+            "early_exit": {
+                "enabled": self.early_exit.enabled,
+                "fuzzy_threshold": self.early_exit.fuzzy_threshold,
+                "store_path": self.early_exit.store_path,
+            },
+            "faithfulness": {
+                "enabled": self.faithfulness.enabled,
+                "mode": self.faithfulness.mode,
+                "threshold": self.faithfulness.threshold,
+                "max_claims": self.faithfulness.max_claims,
+            },
+            "otel": {
+                "enabled": self.otel.enabled,
+                "endpoint": self.otel.endpoint or "(本地模式)",
+                "service_name": self.otel.service_name,
+            },
+            "pg": {
+                "enabled": self.pg.enabled,
+                "host": self.pg.host,
+                "port": self.pg.port,
+                "dbname": self.pg.dbname,
+            },
         }
 
 
 # 模块级单例（延迟初始化）
-_settings: Optional[Settings] = None
+_settings: Settings | None = None
 
 
-def get_settings(path: Optional[str] = None) -> Settings:
+def get_settings(path: str | None = None) -> Settings:
     """获取全局 Settings 单例"""
     global _settings
     if _settings is None:
@@ -324,7 +433,7 @@ def get_settings(path: Optional[str] = None) -> Settings:
     return _settings
 
 
-def reload_settings(path: Optional[str] = None) -> Settings:
+def reload_settings(path: str | None = None) -> Settings:
     """重新加载配置"""
     global _settings
     _settings = Settings.load(path)

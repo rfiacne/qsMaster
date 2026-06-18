@@ -15,10 +15,8 @@
 
 from __future__ import annotations
 
-import io
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
 
 from haystack import Document
 
@@ -28,7 +26,7 @@ logger = logging.getLogger(__name__)
 # ─── 支持的文档类型 ─────────────────────────────────────────
 
 
-SUPPORTED_EXTENSIONS: Dict[str, str] = {
+SUPPORTED_EXTENSIONS: dict[str, str] = {
     ".pdf": "pdf",
     ".docx": "docx",
     ".doc": "docx",  # 旧版 Word，与 docx 共享转换器
@@ -45,7 +43,7 @@ SUPPORTED_EXTENSIONS: Dict[str, str] = {
 }
 
 
-def detect_file_type(file_path: str) -> Optional[str]:
+def detect_file_type(file_path: str) -> str | None:
     """检测文件类型（扩展名匹配）
 
     Returns:
@@ -105,7 +103,7 @@ class PaddleOCRBackend:
             return ""
 
         # result[0] = [(bbox, (text, confidence)), ...]
-        lines: List[str] = []
+        lines: list[str] = []
         for line in result[0]:
             text = line[1][0]
             conf = line[1][1]
@@ -128,7 +126,7 @@ class OpenDataLoaderPDFConverter:
     注意: 每次 convert() 启动 JVM 进程，建议批量传入多个文件。
     """
 
-    def __init__(self, hybrid: Optional[str] = None):
+    def __init__(self, hybrid: str | None = None):
         """
         Args:
             hybrid: None=纯本地模式, "docling-fast"=混合模式(AI增强)
@@ -144,7 +142,7 @@ class OpenDataLoaderPDFConverter:
         except ImportError:
             self._available = False
 
-    def convert(self, file_path: str, meta: Optional[Dict] = None) -> List[Document]:
+    def convert(self, file_path: str, meta: dict | None = None) -> list[Document]:
         """使用 OpenDataLoader 转换 PDF"""
         if not self._available:
             raise ImportError(
@@ -152,10 +150,10 @@ class OpenDataLoaderPDFConverter:
                 "要求: Java 11+ (运行 java -version 检查)"
             )
 
-        import opendataloader_pdf
-        import tempfile
-        import os
         import json
+        import tempfile
+
+        import opendataloader_pdf
 
         path = Path(file_path)
         if not path.exists():
@@ -191,7 +189,7 @@ class OpenDataLoaderPDFConverter:
                 return []
 
             # 读取 Markdown 内容
-            full_text_parts: List[str] = []
+            full_text_parts: list[str] = []
             for md_file in md_files:
                 text = md_file.read_text(encoding="utf-8")
                 if text.strip():
@@ -221,9 +219,9 @@ class OpenDataLoaderPDFConverter:
             )
             return [Document(content=full_text, meta=base_meta)]
 
-    def _extract_tables_from_json(self, data: list) -> List[str]:
+    def _extract_tables_from_json(self, data: list) -> list[str]:
         """从 OpenDataLoader JSON 输出中提取表格 Markdown"""
-        table_texts: List[str] = []
+        table_texts: list[str] = []
         if not isinstance(data, list):
             return table_texts
 
@@ -260,8 +258,8 @@ class PDFConverter:
         self.ocr_enabled = ocr_enabled
         self.ocr_backend = ocr_backend if ocr_enabled else "none"
         self._docling_available = False
-        self._paddle: Optional[PaddleOCRBackend] = None
-        self._odl: Optional[OpenDataLoaderPDFConverter] = None
+        self._paddle: PaddleOCRBackend | None = None
+        self._odl: OpenDataLoaderPDFConverter | None = None
         self._init_docling()
         self._init_opendataloader()
 
@@ -292,7 +290,7 @@ class PDFConverter:
             self._paddle = PaddleOCRBackend()
         return self._paddle
 
-    def convert(self, file_path: str, meta: Optional[Dict] = None) -> List[Document]:
+    def convert(self, file_path: str, meta: dict | None = None) -> list[Document]:
         """转换 PDF 文件为 Haystack Document 列表"""
         path = Path(file_path)
         if not path.exists():
@@ -343,7 +341,7 @@ class PDFConverter:
         doc.close()
         return total_chars < 100
 
-    def _convert_with_docling(self, path: Path, meta: Dict) -> List[Document]:
+    def _convert_with_docling(self, path: Path, meta: dict) -> list[Document]:
         """使用 Docling 转换 PDF"""
         try:
             result = self._docling_converter.convert(str(path))
@@ -368,7 +366,7 @@ class PDFConverter:
                 return self._convert_with_paddle(path, meta)
             return self._convert_with_fallback(path, meta)
 
-    def _convert_with_paddle(self, path: Path, meta: Dict) -> List[Document]:
+    def _convert_with_paddle(self, path: Path, meta: dict) -> list[Document]:
         """使用 PaddleOCR 识别扫描件 PDF"""
         try:
             import fitz
@@ -377,7 +375,7 @@ class PDFConverter:
 
         paddle = self._get_paddle()
         doc = fitz.open(path)
-        pages_text: List[str] = []
+        pages_text: list[str] = []
 
         for page_num in range(len(doc)):
             page = doc[page_num]
@@ -397,13 +395,13 @@ class PDFConverter:
         logger.info(f"PaddleOCR 识别完成: {path.name} ({len(pages_text)} 页)")
         return [Document(content=full_text, meta=meta)]
 
-    def _convert_with_odl(self, path: Path, meta: Dict) -> List[Document]:
+    def _convert_with_odl(self, path: Path, meta: dict) -> list[Document]:
         """使用 OpenDataLoader 转换 PDF"""
         if self._odl is None:
             self._odl = OpenDataLoaderPDFConverter()
         return self._odl.convert(str(path), meta=meta)
 
-    def _convert_with_fallback(self, path: Path, meta: Dict) -> List[Document]:
+    def _convert_with_fallback(self, path: Path, meta: dict) -> list[Document]:
         """使用 PyMuPDF 文本提取（纯文本 PDF fallback）"""
         try:
             import fitz
@@ -436,7 +434,7 @@ class DOCXConverter:
     python-docx 对 .doc（OLE2）有基础支持。
     """
 
-    def convert(self, file_path: str, meta: Optional[Dict] = None) -> List[Document]:
+    def convert(self, file_path: str, meta: dict | None = None) -> list[Document]:
         path = Path(file_path)
         if not path.exists():
             raise FileNotFoundError(f"文件不存在: {file_path}")
@@ -493,7 +491,7 @@ class XLSXConverter:
     每张工作表转 Markdown 表格，sheet 之间用标题分隔。
     """
 
-    def convert(self, file_path: str, meta: Optional[Dict] = None) -> List[Document]:
+    def convert(self, file_path: str, meta: dict | None = None) -> list[Document]:
         path = Path(file_path)
         if not path.exists():
             raise FileNotFoundError(f"文件不存在: {file_path}")
@@ -512,7 +510,7 @@ class XLSXConverter:
         else:
             return self._convert_xls(path, base_meta)
 
-    def _convert_xlsx(self, path: Path, meta: Dict) -> List[Document]:
+    def _convert_xlsx(self, path: Path, meta: dict) -> list[Document]:
         """使用 openpyxl 读取 .xlsx"""
         try:
             import openpyxl
@@ -520,13 +518,13 @@ class XLSXConverter:
             raise ImportError("请安装 openpyxl: pip install openpyxl")
 
         wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
-        parts: List[str] = []
+        parts: list[str] = []
 
         for sheet_name in wb.sheetnames:
             ws = wb[sheet_name]
             parts.append(f"## Sheet: {sheet_name}")
 
-            rows_text: List[str] = []
+            rows_text: list[str] = []
             for row in ws.iter_rows(values_only=True):
                 cells = [
                     (str(cell) if cell is not None else "")
@@ -553,7 +551,7 @@ class XLSXConverter:
 
         return [Document(content=full_text, meta=meta)]
 
-    def _convert_xls(self, path: Path, meta: Dict) -> List[Document]:
+    def _convert_xls(self, path: Path, meta: dict) -> list[Document]:
         """使用 xlrd 读取 .xls（旧格式）"""
         try:
             import xlrd
@@ -561,16 +559,20 @@ class XLSXConverter:
             raise ImportError("请安装 xlrd: pip install xlrd")
 
         wb = xlrd.open_workbook(str(path))
-        parts: List[str] = []
+        parts: list[str] = []
 
         for sheet_name in wb.sheet_names():
             ws = wb.sheet_by_name(sheet_name)
             parts.append(f"## Sheet: {sheet_name}")
 
-            rows_text: List[str] = []
+            rows_text: list[str] = []
             for row_idx in range(ws.nrows):
                 cells = [
-                    (str(ws.cell_value(row_idx, col_idx)) if ws.cell_type(row_idx, col_idx) != xlrd.XL_CELL_EMPTY else "")
+                    (
+                        str(ws.cell_value(row_idx, col_idx))
+                        if ws.cell_type(row_idx, col_idx) != xlrd.XL_CELL_EMPTY
+                        else ""
+                    )
                     for col_idx in range(ws.ncols)
                 ]
                 if any(c.strip() for c in cells):
@@ -601,7 +603,7 @@ class MarkdownConverter:
     保留标题层级结构，确保分块时跨标题的内容不被割裂。
     """
 
-    def convert(self, file_path: str, meta: Optional[Dict] = None) -> List[Document]:
+    def convert(self, file_path: str, meta: dict | None = None) -> list[Document]:
         path = Path(file_path)
         if not path.exists():
             raise FileNotFoundError(f"文件不存在: {file_path}")
@@ -637,7 +639,7 @@ class HTMLConverter:
         except ImportError:
             self._bs_available = False
 
-    def convert(self, file_path: str, meta: Optional[Dict] = None) -> List[Document]:
+    def convert(self, file_path: str, meta: dict | None = None) -> list[Document]:
         path = Path(file_path)
         if not path.exists():
             raise FileNotFoundError(f"文件不存在: {file_path}")
@@ -653,11 +655,11 @@ class HTMLConverter:
         else:
             return self._convert_with_haystack(path, base_meta)
 
-    def _convert_with_bs(self, path: Path, meta: Dict) -> List[Document]:
+    def _convert_with_bs(self, path: Path, meta: dict) -> list[Document]:
         """使用 BeautifulSoup 提取正文"""
         from bs4 import BeautifulSoup
 
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             soup = BeautifulSoup(f, "lxml")
 
         for tag in soup(["script", "style", "nav", "footer", "header", "aside"]):
@@ -666,7 +668,7 @@ class HTMLConverter:
         text = soup.get_text(separator="\n", strip=True)
         return [Document(content=text, meta=meta)]
 
-    def _convert_with_haystack(self, path: Path, meta: Dict) -> List[Document]:
+    def _convert_with_haystack(self, path: Path, meta: dict) -> list[Document]:
         """使用 Haystack HTMLToDocument 作为 fallback"""
         from haystack.components.converters import HTMLToDocument
         from haystack.dataclasses import ByteStream
@@ -686,7 +688,7 @@ class TXTConverter:
     UTF-8 编码读取，保持原样输出。
     """
 
-    def convert(self, file_path: str, meta: Optional[Dict] = None) -> List[Document]:
+    def convert(self, file_path: str, meta: dict | None = None) -> list[Document]:
         path = Path(file_path)
         if not path.exists():
             raise FileNotFoundError(f"文件不存在: {file_path}")
@@ -727,7 +729,7 @@ class ImageConverter:
             self._paddle = PaddleOCRBackend()
         return self._paddle
 
-    def convert(self, file_path: str, meta: Optional[Dict] = None) -> List[Document]:
+    def convert(self, file_path: str, meta: dict | None = None) -> list[Document]:
         """转换图片为 Haystack Document（OCR 识别文字）"""
         path = Path(file_path)
         if not path.exists():
@@ -773,8 +775,8 @@ class FileRouter:
         self.image_converter = ImageConverter()
 
     def convert(
-        self, file_path: str, meta: Optional[Dict] = None
-    ) -> Tuple[str, List[Document]]:
+        self, file_path: str, meta: dict | None = None
+    ) -> tuple[str, list[Document]]:
         """自动转换文件
 
         Returns:
@@ -800,8 +802,8 @@ class FileRouter:
         return file_type, docs
 
     def convert_many(
-        self, file_paths: List[str], meta: Optional[Dict] = None
-    ) -> Dict[str, List[Tuple[str, List[Document], Optional[str]]]]:
+        self, file_paths: list[str], meta: dict | None = None
+    ) -> dict[str, list[tuple[str, list[Document], str | None]]]:
         """批量转换多个文件
 
         Returns:
@@ -810,7 +812,7 @@ class FileRouter:
                 "skipped": [(file_path, reason), ...],
             }
         """
-        result: Dict[str, list] = {"success": [], "skipped": []}
+        result: dict[str, list] = {"success": [], "skipped": []}
 
         for fp in file_paths:
             try:

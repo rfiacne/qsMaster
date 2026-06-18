@@ -5,13 +5,12 @@ CLI 配置管理命令 — qa config
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
 
 import typer
 from rich.console import Console
 from rich.table import Table
 
-from qa.config.settings import Settings, reload_settings
+from qa.config.settings import Settings
 
 console = Console()
 config_app = typer.Typer(name="config", help="配置管理")
@@ -19,7 +18,7 @@ config_app = typer.Typer(name="config", help="配置管理")
 
 @config_app.command()
 def show(
-    config: Optional[str] = typer.Option(
+    config: str | None = typer.Option(
         None, "--config", help="配置文件路径（默认 ~/.qa/config.yaml）"
     ),
 ):
@@ -46,7 +45,7 @@ def show(
 
 @config_app.command()
 def init(
-    config: Optional[str] = typer.Option(
+    config: str | None = typer.Option(
         None, "--config", help="配置文件路径（默认 ~/.qa/config.yaml）"
     ),
     force: bool = typer.Option(False, "--force", help="覆盖已有配置文件"),

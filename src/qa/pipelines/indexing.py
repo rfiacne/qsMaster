@@ -13,12 +13,10 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any, Dict, List, Optional
 
 from haystack import Document
 
-from qa.converters.docling_converter import FileRouter, detect_file_type
+from qa.converters.docling_converter import FileRouter
 from qa.pipelines.components.hierarchical_store import (
     HierarchicalDocumentSplitter,
     StoreWriter,
@@ -38,7 +36,7 @@ class IndexingResult:
     chunk_count: int = 0           # 片段数
     parent_count: int = 0          # 大块数
     total_time_ms: float = 0.0
-    errors: List[str] = field(default_factory=list)
+    errors: list[str] = field(default_factory=list)
 
     @property
     def success(self) -> bool:
@@ -56,7 +54,7 @@ class IndexingPipeline:
         self,
         store_manager: StoreManager,
         embedder=None,  # OpenAIDocumentEmbedder or similar
-        block_sizes: Optional[List[int]] = None,
+        block_sizes: list[int] | None = None,
         ocr_enabled: bool = False,
         ocr_backend: str = "auto",
     ):
@@ -75,9 +73,10 @@ class IndexingPipeline:
 
     def run(
         self,
-        file_paths: List[str],
-        meta: Optional[Dict] = None,
+        file_paths: list[str],
+        meta: dict | None = None,
         skip_if_exists: bool = True,
+        doc_timeout_sec: float = 30.0,
     ) -> IndexingResult:
         """执行索引流程
 
@@ -87,6 +86,7 @@ class IndexingPipeline:
             file_paths: 文件路径列表
             meta: 全局元数据（source/category/effective_date 等）
             skip_if_exists: True 则跳过已存在的文档
+            doc_timeout_sec: 单文档转换超时秒数（默认30s，超时跳过）
 
         Returns:
             IndexingResult
@@ -100,12 +100,20 @@ class IndexingPipeline:
 
         result.files_count = len(file_paths)
 
-        # ── 步骤1: 文件检测 & 转换 ──
+        # ── 步骤1: 文件检测 & 转换（带逐文件超时） ──
         step = "文件转换"
-        logger.info(f"[步骤] {step}: 开始 ({len(file_paths)} 个文件)")
+        logger.info(f"[步骤] {step}: 开始 ({len(file_paths)} 个文件, 超时={doc_timeout_sec}s/文件)")
         t_step = time.time()
+
+        from qa.pipelines.components.timeout_utils import run_with_timeout
+
+        # 对 convert_many 整体加超时（兜底）
         try:
-            converted = self.router.convert_many(file_paths, meta)
+            converted = run_with_timeout(
+                func=self.router.convert_many,
+                timeout_sec=doc_timeout_sec * max(len(file_paths), 1),
+                kwargs={"file_paths": file_paths, "meta": meta},
+            )
             result.documents_skipped = len(converted["skipped"])
             for fp, reason in converted["skipped"]:
                 logger.warning(f"跳过 {fp}: {reason}")
@@ -124,7 +132,7 @@ class IndexingPipeline:
         # ── 步骤2: 收集文档 ──
         step = "文档收集"
         logger.info(f"[步骤] {step}")
-        all_docs: List[Document] = []
+        all_docs: list[Document] = []
         for _file_type, docs_list, _fp in converted["success"]:
             all_docs.extend(docs_list)
 
@@ -133,22 +141,30 @@ class IndexingPipeline:
             result.errors.append("成功解析的文件无内容")
             return result
 
-        # ── 步骤3: 分层分割 ──
+        # ── 步骤3: 分层分割（带超时） ──
         step = "分层分割"
         logger.info(f"[步骤] {step}: {len(all_docs)} 文档")
         t_step = time.time()
         try:
-            split_result = self.splitter.run(documents=all_docs)
+            split_result = run_with_timeout(
+                func=self.splitter.run,
+                timeout_sec=60.0,
+                kwargs={"documents": all_docs},
+            )
             parents = split_result["parents"]
             chunks = split_result["chunks"]
-            logger.info(f"[步骤] {step}: 完成 → {len(parents)} parents + {len(chunks)} chunks ({time.time()-t_step:.1f}s)")
+            elapsed = time.time() - t_step
+            logger.info(
+                f"[步骤] {step}: 完成 → {len(parents)} parents"
+                f" + {len(chunks)} chunks ({elapsed:.1f}s)"
+            )
         except Exception as e:
             logger.error(f"[步骤] {step}: 异常: {e}", exc_info=True)
             result.errors.append(f"{step} 失败: {e}")
             result.total_time_ms = (time.time() - t0) * 1000
             return result
 
-        # ── 步骤4: 嵌入计算 ──
+        # ── 步骤4: 嵌入计算（带超时） ──
         step = "嵌入计算"
         if parents or chunks:
             logger.info(f"[步骤] {step}: parents={len(parents)}, chunks={len(chunks)}")
@@ -156,7 +172,11 @@ class IndexingPipeline:
             try:
                 if self.embedder is not None:
                     logger.info(f"[步骤] {step}: 使用 Haystack Embedder")
-                    embedded_result = self.embedder.run(documents=parents + chunks)
+                    embedded_result = run_with_timeout(
+                        func=self.embedder.run,
+                        timeout_sec=120.0,
+                        kwargs={"documents": parents + chunks},
+                    )
                     # 用新文档替换原列表
                     embedded_map = {d.id: d for d in embedded_result["documents"] if d.id}
                     parents = [embedded_map.get(d.id, d) for d in parents]
@@ -202,12 +222,13 @@ class IndexingPipeline:
 
         return result
 
-    def _embed_chunks(self, docs: List[Document]) -> List[Document]:
+    def _embed_chunks(self, docs: list[Document]) -> list[Document]:
         """为文档片段生成嵌入向量（自动选择远程 API 或本地模型）
 
         返回新的 Document 列表（通过 dataclasses.replace 生成）。
         """
         import dataclasses
+
         from qa.pipelines.components.embedder import embed_texts
 
         embed_batch = min(20, 20)  # 本地模型也分批，避免内存爆涨
@@ -216,7 +237,10 @@ class IndexingPipeline:
 
         for i in range(0, total, embed_batch):
             batch = docs[i : i + embed_batch]
-            valid_pairs = [(idx, d) for idx, d in enumerate(batch) if d.content and d.content.strip()]
+            valid_pairs = [
+                (idx, d) for idx, d in enumerate(batch)
+                if d.content and d.content.strip()
+            ]
             if not valid_pairs:
                 continue
 
@@ -232,13 +256,15 @@ class IndexingPipeline:
                         embedding=vectors[emb_idx],
                     )
 
-            logger.info(f"嵌入进度: {min(i + embed_batch, total)}/{total} ({(i + embed_batch) / total * 100:.0f}%)")
+            progress = min(i + embed_batch, total)
+            pct = (i + embed_batch) / total * 100
+            logger.info(f"嵌入进度: {progress}/{total} ({pct:.0f}%)")
 
         logger.info(f"嵌入完成: {total} 个片段")
         return embedded
 
 
-def validate_meta(meta: Optional[Dict]) -> List[str]:
+def validate_meta(meta: dict | None) -> list[str]:
     """验证元数据必需字段
 
     Returns:
@@ -250,8 +276,8 @@ def validate_meta(meta: Optional[Dict]) -> List[str]:
     missing = []
     required = ["source", "category", "effective_date"]
 
-    for field in required:
-        if field not in meta or not meta[field]:
-            missing.append(field)
+    for req_field in required:
+        if req_field not in meta or not meta[req_field]:
+            missing.append(req_field)
 
     return missing

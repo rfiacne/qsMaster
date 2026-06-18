@@ -6,10 +6,8 @@
 
 from __future__ import annotations
 
-import json
 import logging
 from pathlib import Path
-from typing import List, Optional
 
 import typer
 from rich.console import Console
@@ -29,7 +27,7 @@ logger = logging.getLogger(__name__)
 console = Console()
 
 
-def _collect_files(paths: List[str]) -> List[str]:
+def _collect_files(paths: list[str]) -> list[str]:
     """收集所有要索引的文件路径
 
     目录会递归扫描支持的文档格式。
@@ -42,7 +40,7 @@ def _collect_files(paths: List[str]) -> List[str]:
         ".txt",
         ".jpg", ".jpeg", ".png",
     }
-    files: List[str] = []
+    files: list[str] = []
 
     for path_str in paths:
         p = Path(path_str)
@@ -65,16 +63,16 @@ def _collect_files(paths: List[str]) -> List[str]:
 
 def index(
     path: str = typer.Argument(..., help="文件或目录路径"),
-    source: Optional[str] = typer.Option(None, "--source", help="来源机构（必需）"),
-    category: Optional[str] = typer.Option(None, "--category", help="文档类别（必需）"),
-    effective_date: Optional[str] = typer.Option(
+    source: str | None = typer.Option(None, "--source", help="来源机构（必需）"),
+    category: str | None = typer.Option(None, "--category", help="文档类别（必需）"),
+    effective_date: str | None = typer.Option(
         None, "--effective-date", help="生效日期 YYYY-MM-DD（必需）"
     ),
-    version: Optional[str] = typer.Option(None, "--version", help="版本号（可选）"),
-    tags: Optional[str] = typer.Option(None, "--tags", help="标签列表（逗号分隔，可选）"),
-    description: Optional[str] = typer.Option(None, "--description", help="文档摘要（可选）"),
+    version: str | None = typer.Option(None, "--version", help="版本号（可选）"),
+    tags: str | None = typer.Option(None, "--tags", help="标签列表（逗号分隔，可选）"),
+    description: str | None = typer.Option(None, "--description", help="文档摘要（可选）"),
     rebuild: bool = typer.Option(False, "--rebuild", help="全量重建索引"),
-    bit_width: Optional[int] = typer.Option(
+    bit_width: int | None = typer.Option(
         None, "--bit-width", help="turbovec 量化宽度: 4 或 2"
     ),
     ocr_backend: str = typer.Option(
@@ -88,7 +86,9 @@ def index(
     # 收集文件
     files = _collect_files([path])
     if not files:
-        console.print("[red]未找到支持的文档文件（支持: PDF/DOCX/DOC/XLSX/XLS/MD/HTML/TXT/JPG/PNG）[/red]")
+        console.print(
+            "[red]未找到支持的文档文件（支持: PDF/DOCX/DOC/XLSX/XLS/MD/HTML/TXT/JPG/PNG）[/red]"
+        )
         raise typer.Exit(4)
     console.print(f"找到 [bold]{len(files)}[/bold] 个文档文件")
 

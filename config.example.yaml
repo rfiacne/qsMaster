@@ -54,3 +54,33 @@ server:
   host: "127.0.0.1"       # 监听地址，0.0.0.0 允许局域网访问
   port: 8001               # 服务端口
   reload: false            # 开发模式自动重启
+
+# ── M2: Early Exit 标准答案库 ───────────────────────────
+early_exit:
+  enabled: true               # 启用标准答案库快速匹配
+  fuzzy_threshold: 0.82       # 语义模糊匹配相似度阈值 (0~1)
+  store_path: "./data/standard_answers"  # 标准答案库存储路径
+
+# ── M2: Faithfulness 防幻觉校验 ────────────────────────
+faithfulness:
+  enabled: true               # 启用 LLM 生成后自动校验
+  mode: "llm"                 # 校验模式: llm | disabled
+  threshold: 0.5              # 通过阈值：支撑比例 >= 此值 PASS，< 此值 FAIL
+  max_claims: 10              # 每次最多校验的声明数
+
+# ── M2: PostgreSQL 全文检索 ─────────────────────────────
+pg:
+  enabled: false              # 启用 PG 替换内存 BM25（需 PostgreSQL 实例）
+  host: "localhost"
+  port: 5432
+  dbname: "qa"
+  user: "qa"
+  password: ""                # 建议用环境变量 QA_PG_PASSWORD
+  min_conn: 1
+  max_conn: 5
+
+# ── M4: OpenTelemetry 可观测性 ──────────────────────────
+otel:
+  enabled: false              # 启用 OpenTelemetry 链路追踪
+  endpoint: ""                # OTLP HTTP 端点（如 http://otel-collector:4318）
+  service_name: "securities-qa-agent"

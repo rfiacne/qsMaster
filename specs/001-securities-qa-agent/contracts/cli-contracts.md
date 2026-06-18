@@ -175,6 +175,7 @@ JSON (stderr):
 - `EMPTY_INDEX`: 知识库为空
 - `LLM_UNAVAILABLE`: LLM API 不可用
 - `EMBEDDING_UNAVAILABLE`: Embedding API 不可用
+- `RETRIEVAL_UNAVAILABLE`: 检索后端不可用（区别于嵌入服务故障）
 - `API_TIMEOUT`: API 调用超时
 - `VALIDATION_ERROR`: 输入验证失败（缺少必需元数据等）
 - `INDEX_ERROR`: 索引构建失败

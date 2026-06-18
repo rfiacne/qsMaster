@@ -8,7 +8,6 @@
 from __future__ import annotations
 
 import logging
-from typing import List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +19,9 @@ class LocalEmbedder:
     首次调用时自动下载模型，后续从缓存加载。
     """
 
-    def __init__(self, model_name: str = "jinaai/jina-embeddings-v5-text-nano", task: str = "retrieval"):
+    def __init__(  # noqa: E501
+        self, model_name: str = "jinaai/jina-embeddings-v5-text-nano", task: str = "retrieval"
+    ):
         self.model_name = model_name
         self._task = task
         self._model = None
@@ -52,7 +53,7 @@ class LocalEmbedder:
                 f"或配置 embedding.api_base_url 使用远程 API"
             )
 
-    def encode(self, texts: List[str], task: str = "retrieval") -> List[List[float]]:
+    def encode(self, texts: list[str], task: str = "retrieval") -> list[list[float]]:
         """将文本列表转为嵌入向量
 
         Args:
@@ -63,7 +64,7 @@ class LocalEmbedder:
         embeddings = self._model.encode(texts, task=task, show_progress_bar=False)
         return [emb.tolist() for emb in embeddings]
 
-    def encode_query(self, text: str) -> List[float]:
+    def encode_query(self, text: str) -> list[float]:
         """将单个查询文本转为嵌入向量"""
         return self.encode([text])[0]
 

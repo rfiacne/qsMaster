@@ -12,17 +12,18 @@ CLI 主入口 — qa 命令
 
 from __future__ import annotations
 
-import sys
-
 import typer
 from rich.console import Console
 
 from qa import __version__
 
+from .answer import answer_app
 from .ask import ask_app
 from .chat import chat_app
+from .compare import compare_app
 from .config import config_app
 from .index import index
+from .review import review_app
 
 console = Console()
 
@@ -37,6 +38,9 @@ app = typer.Typer(
 app.add_typer(config_app, name="config")
 app.add_typer(ask_app, name="ask")
 app.add_typer(chat_app, name="chat")
+app.add_typer(answer_app, name="answer")
+app.add_typer(compare_app, name="compare")
+app.add_typer(review_app, name="review")
 app.command(name="index")(index)
 
 

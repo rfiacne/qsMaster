@@ -10,7 +10,6 @@
 from __future__ import annotations
 
 import logging
-from typing import List, Optional
 
 from qa.config.settings import get_settings
 
@@ -40,7 +39,7 @@ def create_remote_client():
     )
 
 
-def embed_texts(texts: List[str]) -> List[List[float]]:
+def embed_texts(texts: list[str]) -> list[list[float]]:
     """嵌入文本列表（自动选择后端）
 
     策略:
@@ -72,12 +71,12 @@ def embed_texts(texts: List[str]) -> List[List[float]]:
             )
 
 
-def embed_query(text: str) -> List[float]:
+def embed_query(text: str) -> list[float]:
     """嵌入单个查询"""
     return embed_texts([text])[0]
 
 
-def _embed_remote(texts: List[str]) -> List[List[float]]:
+def _embed_remote(texts: list[str]) -> list[list[float]]:
     """使用远程 API 嵌入"""
     settings = get_settings()
     client = create_remote_client()
@@ -88,7 +87,7 @@ def _embed_remote(texts: List[str]) -> List[List[float]]:
     return [d.embedding for d in resp.data]
 
 
-def _embed_local(texts: List[str]) -> List[List[float]]:
+def _embed_local(texts: list[str]) -> list[list[float]]:
     """使用本地模型嵌入"""
     embedder = get_local_embedder()
     return embedder.encode(texts)

@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any, Dict, List, Optional
 
 from haystack import Document
 
@@ -33,7 +32,7 @@ class Reranker:
         self,
         model: str = "Qwen/Qwen3-Reranker-4B",
         api_base_url: str = "",
-        api_key: Optional[str] = None,
+        api_key: str | None = None,
         top_k: int = 5,
     ):
         self.model = model
@@ -44,9 +43,9 @@ class Reranker:
     def rerank(
         self,
         query: str,
-        documents: List[Document],
-        top_k: Optional[int] = None,
-    ) -> List[Document]:
+        documents: list[Document],
+        top_k: int | None = None,
+    ) -> list[Document]:
         """对文档列表进行重排序
 
         Args:
@@ -66,7 +65,13 @@ class Reranker:
         settings = get_settings()
         # 优先用 rerank 自己的 base_url，依次回退 embedding → llm
         base_url = self.api_base_url or settings.embedding.api_base_url or settings.llm.api_base_url
-        api_key = self.api_key or settings.rerank.resolved_api_key or settings.embedding.resolved_api_key or settings.llm.resolved_api_key or ""
+        api_key = (
+            self.api_key
+            or settings.rerank.resolved_api_key
+            or settings.embedding.resolved_api_key
+            or settings.llm.resolved_api_key
+            or ""
+        )
 
         doc_texts = [d.content or "" for d in documents]
 
@@ -102,9 +107,9 @@ class Reranker:
         return result
 
     def _call_rerank_api(
-        self, query: str, documents: List[str],
+        self, query: str, documents: list[str],
         base_url: str, api_key: str = "",
-    ) -> List[float]:
+    ) -> list[float]:
         """调用远程 Reranker API
 
         兼容 SiliconFlow / Jina / Cohere 等格式:

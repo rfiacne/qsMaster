@@ -10,13 +10,12 @@ API 完全兼容 Haystack 2.x DocumentStore 接口，
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from haystack import Document
 from haystack.document_stores.types import DuplicatePolicy
@@ -34,7 +33,7 @@ class IndexStatus:
     index_size_bytes: int = 0
     last_updated: str = ""
     bit_width: int = 4
-    dim: Optional[int] = None
+    dim: int | None = None
     persist_path: str = ""
 
 
@@ -52,7 +51,7 @@ class StoreManager:
 
     def __init__(
         self,
-        dim: Optional[int] = None,
+        dim: int | None = None,
         bit_width: int = 4,
         similarity_function: str = "cosine",
         persist_path: str = "./data/index",
@@ -106,7 +105,7 @@ class StoreManager:
 
     def write_chunks(
         self,
-        documents: List[Document],
+        documents: list[Document],
         policy: DuplicatePolicy = DuplicatePolicy.SKIP,
     ) -> int:
         """写入小块文档到 chunk_store（用于向量检索）"""
@@ -116,7 +115,7 @@ class StoreManager:
 
     def write_parents(
         self,
-        documents: List[Document],
+        documents: list[Document],
         policy: DuplicatePolicy = DuplicatePolicy.SKIP,
     ) -> int:
         """写入大块文档到 parent_store（用于 LLM 上下文）"""
@@ -128,10 +127,10 @@ class StoreManager:
 
     def retrieve(
         self,
-        query_embedding: List[float],
+        query_embedding: list[float],
         top_k: int = 5,
-        filters: Optional[Dict] = None,
-    ) -> List[Document]:
+        filters: dict | None = None,
+    ) -> list[Document]:
         """从 chunk_store 检索最相似的文档"""
         if not self._initialized:
             self.initialize()
@@ -142,8 +141,8 @@ class StoreManager:
         )
 
     def get_parent_docs(
-        self, parent_ids: List[str]
-    ) -> List[Document]:
+        self, parent_ids: list[str]
+    ) -> list[Document]:
         """根据 parent_id 批量获取父级文档"""
         if not self._initialized:
             self.initialize()
@@ -158,7 +157,7 @@ class StoreManager:
         }
         return self.parent_store.filter_documents(filters=filters)
 
-    def get_docs_by_ids(self, ids: List[str]) -> List[Document]:
+    def get_docs_by_ids(self, ids: list[str]) -> list[Document]:
         """按文档 ID 检索（跨两个 store 查找）"""
         if not self._initialized:
             self.initialize()
@@ -187,7 +186,7 @@ class StoreManager:
 
     # ─── 删除 ───────────────────────────────────────────────
 
-    def delete_documents(self, ids: List[str]) -> int:
+    def delete_documents(self, ids: list[str]) -> int:
         """删除指定文档（两个 store 同时删除）"""
         if not self._initialized:
             self.initialize()
@@ -195,7 +194,7 @@ class StoreManager:
         count += self.parent_store.delete_documents(ids)
         return count
 
-    def delete_by_filter(self, filters: Dict) -> int:
+    def delete_by_filter(self, filters: dict) -> int:
         """按过滤条件删除文档"""
         if not self._initialized:
             self.initialize()
@@ -284,7 +283,7 @@ class StoreManager:
             return 0
         return self.chunk_store.count_documents()
 
-    def get_unique_metadata_values(self, field: str) -> List[Any]:
+    def get_unique_metadata_values(self, field: str) -> list[Any]:
         """获取元数据字段的唯一值列表"""
         if not self._initialized:
             self.initialize()
@@ -295,7 +294,7 @@ class StoreManager:
 
 
 def create_store_manager(
-    dim: Optional[int] = None,
+    dim: int | None = None,
     bit_width: int = 4,
     similarity_function: str = "cosine",
     persist_path: str = "./data/index",

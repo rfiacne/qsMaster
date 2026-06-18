@@ -10,16 +10,14 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import sys
-import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 # 确保 src 在路径中
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
-from fastapi import FastAPI, HTTPException, UploadFile, Form, File
+from fastapi import FastAPI, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -48,7 +46,7 @@ app.add_middleware(
 class AskRequest(BaseModel):
     question: str
     top_k: int = 5
-    filters: Optional[Dict[str, Any]] = None
+    filters: dict[str, Any] | None = None
     no_llm: bool = False
 
 
@@ -90,6 +88,43 @@ def get_query_pipeline():
                 api_key=settings.rerank.resolved_api_key,
                 top_k=settings.rerank.top_k,
             )
+        # 初始化 EarlyExitMatcher
+        early_exit_matcher = None
+        if settings.early_exit.enabled:
+            from qa.pipelines.components.early_exit import EarlyExitMatcher
+            early_exit_matcher = EarlyExitMatcher(
+                store_path=settings.early_exit.store_path,
+                fuzzy_threshold=settings.early_exit.fuzzy_threshold,
+                enabled=settings.early_exit.enabled,
+            )
+
+        # 初始化 FaithfulnessEvaluator
+        faithfulness_evaluator = None
+        if settings.faithfulness.enabled:
+            from qa.pipelines.components.faithfulness import FaithfulnessEvaluator
+            faithfulness_evaluator = FaithfulnessEvaluator(
+                enabled=True,
+                threshold=settings.faithfulness.threshold,
+                max_claims=settings.faithfulness.max_claims,
+            )
+
+        # 初始化审核队列
+        from qa.pipelines.components.review_queue import ReviewWorkflow
+        review_workflow = ReviewWorkflow()
+        review_workflow.ensure_loaded()
+
+        # 初始化审计日志
+        from qa.pipelines.components.audit_logger import AuditStore
+        audit_store = AuditStore()
+
+        # 初始化 OpenTelemetry 追踪
+        from qa.pipelines.components.tracing import init_tracing
+        init_tracing(
+            service_name=settings.otel.service_name,
+            otlp_endpoint=settings.otel.endpoint,
+            enabled=settings.otel.enabled,
+        )
+
         _query_pipeline = QueryPipeline(
             store_manager=get_store(),
             top_k=settings.retrieval.top_k,
@@ -97,6 +132,10 @@ def get_query_pipeline():
             use_hybrid=settings.retrieval.use_hybrid,
             hybrid_vector_weight=settings.retrieval.hybrid_vector_weight,
             reranker=reranker,
+            early_exit_matcher=early_exit_matcher,
+            faithfulness_evaluator=faithfulness_evaluator,
+            review_workflow=review_workflow,
+            audit_store=audit_store,
         )
     return _query_pipeline
 
@@ -145,6 +184,65 @@ async def ask(req: AskRequest):
     return result.to_dict()
 
 
+@app.post("/api/v1/qa/ask/stream")
+async def ask_stream(req: AskRequest):
+    """流式问答 — SSE 响应"""
+    from fastapi.responses import StreamingResponse
+
+    pipeline = get_query_pipeline()
+
+    async def event_generator():
+        for event in pipeline.run_stream(
+            question=req.question,
+            top_k=req.top_k,
+            filters=req.filters,
+        ):
+            import json
+            event_type = event.get("type", "data")
+            data = json.dumps(event, ensure_ascii=False)
+            yield f"event: {event_type}\ndata: {data}\n\n"
+
+            if event_type == "error" or event_type == "done":
+                break
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@app.get("/api/v1/qa/sessions")
+async def list_sessions(limit: int = 20):
+    """列出最近会话"""
+    from qa.pipelines.components.session_store import SessionStore
+    store = SessionStore()
+    store.load()
+    sessions = store.list_recent(limit=limit)
+    return {
+        "sessions": [
+            {"id": s.id, "title": s.title or "(新会话)", "turns": len(s.turns),
+             "updated_at": s.updated_at, "created_at": s.created_at}
+            for s in sessions
+        ]
+    }
+
+
+@app.delete("/api/v1/qa/sessions/{session_id}")
+async def delete_session(session_id: str):
+    """删除会话"""
+    from qa.pipelines.components.session_store import SessionStore
+    store = SessionStore()
+    store.load()
+    if store.delete(session_id):
+        return {"deleted": True}
+    raise HTTPException(status_code=404, detail="会话不存在")
+
+
 @app.post("/api/v1/qa/search")
 async def search(req: SearchRequest):
     """知识库检索（仅检索，不生成回答）"""
@@ -171,7 +269,7 @@ async def search(req: SearchRequest):
 
     # 按文件聚合：同一个文件的多个片段合并为一条结果
     from collections import defaultdict
-    file_groups: Dict[str, list] = defaultdict(list)
+    file_groups: dict[str, list] = defaultdict(list)
     for s in filtered:
         file_groups[s.file_name].append(s)
 
@@ -220,7 +318,7 @@ async def search(req: SearchRequest):
 
 @app.post("/api/v1/qa/upload")
 async def upload(
-    files: List[UploadFile],
+    files: list[UploadFile],
     source: str = Form(default=""),
     category: str = Form(default=""),
     effective_date: str = Form(default=""),
@@ -266,7 +364,7 @@ async def upload(
                 asyncio.to_thread(pipeline.run, file_paths, meta_dict),
                 timeout=pipe_timeout,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             raise RuntimeError(
                 f"索引超时 ({pipe_timeout}s)。查看服务端日志确认卡在哪一步。"
             )
@@ -311,11 +409,153 @@ def _mount_frontend(app_instance):
                     response.headers["Expires"] = "0"
                 return response
 
-        app_instance.mount("/", StaticFiles(directory=str(frontend_dir), html=True), name="frontend")
+        app_instance.mount(
+            "/", StaticFiles(directory=str(frontend_dir), html=True), name="frontend"
+        )
         app_instance.add_middleware(NoCacheMiddleware)
         print(f"前端静态文件已挂载: {frontend_dir}")
     except Exception as e:
         print(f"前端挂载失败: {e}")
+
+
+# ─── 标准答案库 API ─────────────────────────────────
+
+
+def _get_answer_store():
+    """获取标准答案库存储"""
+    from qa.pipelines.components.early_exit import StandardAnswer, StandardAnswerStore
+    settings = get_settings()
+    store = StandardAnswerStore(store_path=settings.early_exit.store_path)
+    store.load()
+    return store, StandardAnswer
+
+
+@app.get("/api/v1/qa/answers")
+async def list_answers(
+    category: str = "", keyword: str = "", status: str = "",
+    page: int = 1, page_size: int = 50,
+):
+    """标准答案列表"""
+    store, _ = _get_answer_store()
+    if status:
+        answers = store.list_by_status(status)
+    elif keyword:
+        answers = store.search(keyword)
+    elif category:
+        answers = store.list_by_category(category)
+    else:
+        answers = store.list_all()
+    # 分页
+    total = len(answers)
+    start = (page - 1) * page_size
+    items = answers[start:start + page_size]
+    return {
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "items": [a.to_dict() for a in items],
+    }
+
+
+@app.post("/api/v1/qa/answers")
+async def add_answer(req: dict):
+    """添加标准答案"""
+    store, std_answer_cls = _get_answer_store()
+    q = req.get("question", "").strip()
+    a = req.get("answer", "").strip()
+    if not q or not a:
+        raise HTTPException(status_code=400, detail="question 和 answer 为必填字段")
+    answer = std_answer_cls(
+        question=q, answer=a,
+        category=req.get("category", ""),
+        source=req.get("source", "api"),
+        match_strategy=req.get("match_strategy", "both"),
+    )
+    is_new = store.add(answer)
+    return {"id": answer.id, "created": is_new, "question": q}
+
+
+@app.delete("/api/v1/qa/answers/{answer_id}")
+async def delete_answer(answer_id: str):
+    """删除标准答案"""
+    store, _ = _get_answer_store()
+    if store.remove(answer_id):
+        return {"deleted": True, "id": answer_id}
+    raise HTTPException(status_code=404, detail="未找到该标准答案")
+
+
+@app.patch("/api/v1/qa/answers/{answer_id}/status")
+async def set_answer_status(answer_id: str, req: dict):
+    """启用/禁用标准答案"""
+    store, _ = _get_answer_store()
+    new_status = req.get("status", "")
+    if new_status not in ("enabled", "disabled"):
+        raise HTTPException(status_code=400, detail="status 必须为 enabled 或 disabled")
+    if store.set_status(answer_id, new_status):
+        return {"id": answer_id, "status": new_status}
+    raise HTTPException(status_code=404, detail="未找到该标准答案")
+
+
+@app.post("/api/v1/qa/answers/{answer_id}/aliases")
+async def add_answer_alias(answer_id: str, req: dict):
+    """添加别名问题"""
+    store, _ = _get_answer_store()
+    alias_q = req.get("alias_question", "").strip()
+    score = req.get("similarity_score", 1.0)
+    if not alias_q:
+        raise HTTPException(status_code=400, detail="alias_question 为必填字段")
+    if store.add_alias(answer_id, alias_q, similarity_score=score):
+        return {"id": answer_id, "alias_question": alias_q}
+    raise HTTPException(status_code=404, detail="未找到该标准答案")
+
+
+@app.get("/api/v1/qa/reviews")
+async def list_reviews(status: str = "", page: int = 1, page_size: int = 20):
+    """审核队列列表"""
+    from qa.pipelines.components.review_queue import ReviewWorkflow
+    workflow = ReviewWorkflow()
+    workflow.ensure_loaded()
+    items = workflow.store.list_all(status=status or None)
+    total = len(items)
+    start = (page - 1) * page_size
+    return {
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "items": [i.to_dict() for i in items[start:start + page_size]],
+    }
+
+
+@app.post("/api/v1/qa/reviews/{item_id}/label")
+async def label_review(item_id: str, req: dict):
+    """标注审核项"""
+    from qa.pipelines.components.early_exit import StandardAnswerStore
+    from qa.pipelines.components.review_queue import ReviewWorkflow
+    settings = get_settings()
+    workflow = ReviewWorkflow()
+    workflow.ensure_loaded()
+    label = req.get("label", "")
+    std_store = StandardAnswerStore(store_path=settings.early_exit.store_path)
+    if workflow.label(item_id, label, reviewer=req.get("reviewer", "web"),
+                      comment=req.get("comment", ""), standard_answer_store=std_store):
+        return {"id": item_id, "label": label}
+    raise HTTPException(status_code=400, detail="标注失败（可能已审核或不存在）")
+
+
+@app.get("/api/v1/qa/reviews/stats")
+async def review_stats():
+    """审核统计"""
+    from qa.pipelines.components.review_queue import ReviewWorkflow
+    workflow = ReviewWorkflow()
+    workflow.ensure_loaded()
+    return workflow.get_stats().to_dict()
+
+
+@app.get("/api/v1/qa/metrics")
+async def metrics():
+    """可观测性指标"""
+    from qa.pipelines.components.tracing import get_metrics
+    return get_metrics().snapshot().to_dict()
 
 
 @app.get("/api/v1/qa/health")
