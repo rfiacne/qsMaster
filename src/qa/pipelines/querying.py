@@ -130,7 +130,7 @@ class QueryPipeline:
     def __init__(
         self,
         store_manager: StoreManager,
-        embedder=None,   # TextEmbedder
+        embedder=None,  # TextEmbedder
         llm_generator=None,  # Generator / OpenAIChatGenerator
         top_k: int = 5,
         auto_merge_threshold: float = 0.5,
@@ -144,6 +144,7 @@ class QueryPipeline:
         audit_store: AuditStore | None = None,
         query_rewriter: QueryRewriter | None = None,
         query_cache: QueryCache | None = None,
+        bm25_index: Any = None,
     ):
         self.store_manager = store_manager
         self.embedder = embedder
@@ -159,11 +160,17 @@ class QueryPipeline:
         self.audit_store = audit_store
         self.query_rewriter = query_rewriter
         self.query_cache = query_cache
-        self.hybrid_retriever = HybridRetriever(
-            store_manager=store_manager,
-            vector_weight=hybrid_vector_weight,
-            top_k=top_k * 2,
-        ) if use_hybrid else None
+        self.bm25_index = bm25_index
+        self.hybrid_retriever = (
+            HybridRetriever(
+                store_manager=store_manager,
+                vector_weight=hybrid_vector_weight,
+                top_k=top_k * 2,
+                bm25_index=bm25_index,
+            )
+            if use_hybrid
+            else None
+        )
 
     def run(
         self,
@@ -212,10 +219,9 @@ class QueryPipeline:
                     SourceRef(
                         document_id=ee_result.answer.id,
                         file_name="标准答案库",
-                        content=(
-                            f"Q: {ee_result.answer.question}\n"
-                            f"A: {ee_result.answer.answer}"
-                        )[:300],
+                        content=(f"Q: {ee_result.answer.question}\nA: {ee_result.answer.answer}")[
+                            :300
+                        ],
                         source=ee_result.answer.source or "标准答案库",
                         category=ee_result.answer.category,
                         effective_date=ee_result.answer.effective_date or "",
@@ -242,9 +248,7 @@ class QueryPipeline:
                         filters=filters,
                     )
                     if cached_result is not None:
-                        logger.info(
-                            f"查询缓存命中: {question[:60]}"
-                        )
+                        logger.info(f"查询缓存命中: {question[:60]}")
                         span.set_attribute("hit", "true")
                         return cached_result
                     span.set_attribute("hit", "false")
@@ -263,9 +267,7 @@ class QueryPipeline:
 
                     if rewrite_result.sub_questions and len(rewrite_result.sub_questions) > 1:
                         # 多意图：分别嵌入检索后合并
-                        logger.info(
-                            f"多意图分解: {len(rewrite_result.sub_questions)} 子问题"
-                        )
+                        logger.info(f"多意图分解: {len(rewrite_result.sub_questions)} 子问题")
                         all_chunks: list[Document] = []
                         for sq in rewrite_result.sub_questions:
                             try:
@@ -276,7 +278,7 @@ class QueryPipeline:
                                 if sq_results:
                                     all_chunks.extend(sq_results)
                             except Exception as sq_e:
-                                logger.warning(f"子问题检索失败 \"{sq}\": {sq_e}")
+                                logger.warning(f'子问题检索失败 "{sq}": {sq_e}')
 
                         # 去重（按文档 id）
                         seen_ids: set = set()
@@ -287,9 +289,7 @@ class QueryPipeline:
                                 seen_ids.add(doc_id)
                                 chunk_results.append(doc)
 
-                        logger.info(
-                            f"多意图合并后: {len(all_chunks)} → {len(chunk_results)} 去重"
-                        )
+                        logger.info(f"多意图合并后: {len(all_chunks)} → {len(chunk_results)} 去重")
                         # 直接跳转到 Reranker（跳过下方单次嵌入+检索）
                         retrieval_t0 = time.time()
                         skip_embed_and_retrieve = True
@@ -349,7 +349,7 @@ class QueryPipeline:
             logger.info(f"Reranker 精排: {len(chunk_results)} 个候选文档")
             try:
                 chunk_results = self.reranker.rerank(
-                    query=question,
+                    query=effective_question,
                     documents=chunk_results,
                     top_k=self.top_k * 2,
                 )
@@ -395,7 +395,7 @@ class QueryPipeline:
             result.answer is None
             or self.faithfulness_evaluator is None
             or result.from_standard_answer
-            or self._is_low_risk_context(context_docs)
+            or self._is_low_risk_context(chunk_results, self.reranker is not None)
         )
         if not _should_skip_faithfulness:
             with tracer.start_span("faithfulness_check") as span:
@@ -442,8 +442,7 @@ class QueryPipeline:
                     question=question,
                     answer=result.faithfulness.get("original_answer", _original_answer or ""),
                     sources=[
-                        s.to_dict() if hasattr(s, 'to_dict') else vars(s)
-                        for s in result.sources
+                        s.to_dict() if hasattr(s, "to_dict") else vars(s) for s in result.sources
                     ],
                     faithfulness_score=result.faithfulness.get("score", 0.0),
                     faithfulness_result="fail",
@@ -465,12 +464,10 @@ class QueryPipeline:
                     from_standard_answer=result.from_standard_answer,
                     match_type=result.match_type,
                     faithfulness_result=(
-                        result.faithfulness.get("result", "")
-                        if result.faithfulness else ""
+                        result.faithfulness.get("result", "") if result.faithfulness else ""
                     ),
                     faithfulness_score=(
-                        result.faithfulness.get("score", 0.0)
-                        if result.faithfulness else 0.0
+                        result.faithfulness.get("score", 0.0) if result.faithfulness else 0.0
                     ),
                     sources=[
                         {"file_name": s.file_name, "score": s.score, "source_type": s.source_type}
@@ -494,11 +491,7 @@ class QueryPipeline:
             pass
 
         # 写入查询缓存（非错误、非 Early Exit 的结果）
-        if (
-            self.query_cache is not None
-            and result.success
-            and not result.from_standard_answer
-        ):
+        if self.query_cache is not None and result.success and not result.from_standard_answer:
             try:
                 self.query_cache.put(
                     question=question,
@@ -512,8 +505,9 @@ class QueryPipeline:
 
         return result
 
-    def run_stream(self, question: str, top_k: int | None = None,
-                   filters: dict | None = None) -> Any:
+    def run_stream(
+        self, question: str, top_k: int | None = None, filters: dict | None = None
+    ) -> Any:
         """流式问答 — 逐 token yield LLM 响应
 
         与 run() 共享检索和 Early Exit 逻辑，仅 LLM 生成阶段使用流式。
@@ -526,24 +520,28 @@ class QueryPipeline:
 
         # 0) 空索引检查
         if self.store_manager.count_chunks() == 0:
-            yield {"type": "error", "code": "EMPTY_INDEX",
-                   "message": "知识库尚未建立，请先导入文档"}
+            yield {
+                "type": "error",
+                "code": "EMPTY_INDEX",
+                "message": "知识库尚未建立，请先导入文档",
+            }
             return
 
         # 0.5) Early Exit
         if self.early_exit_matcher is not None and self.early_exit_matcher.is_enabled:
             ee_result = self.early_exit_matcher.match(question)
             if ee_result.matched:
-                sources = [{
-                    "file_name": "标准答案库",
-                    "content": (
-                        f"Q: {ee_result.answer.question}\n"
-                        f"A: {ee_result.answer.answer}"
-                    )[:300],
-                    "score": ee_result.score,
-                    "source": ee_result.answer.source or "标准答案库",
-                    "source_type": "",
-                }]
+                sources = [
+                    {
+                        "file_name": "标准答案库",
+                        "content": (
+                            f"Q: {ee_result.answer.question}\nA: {ee_result.answer.answer}"
+                        )[:300],
+                        "score": ee_result.score,
+                        "source": ee_result.answer.source or "标准答案库",
+                        "source_type": "",
+                    }
+                ]
                 yield {
                     "type": "meta",
                     "from_standard_answer": True,
@@ -578,12 +576,16 @@ class QueryPipeline:
         try:
             if self.hybrid_retriever is not None:
                 chunk_results = self.hybrid_retriever.retrieve(
-                    query_embedding=query_embedding, query_text=effective_question,
-                    top_k=k, filters=filters,
+                    query_embedding=query_embedding,
+                    query_text=effective_question,
+                    top_k=k,
+                    filters=filters,
                 )
             else:
                 chunk_results = self.store_manager.retrieve(
-                    query_embedding=query_embedding, top_k=k, filters=filters,
+                    query_embedding=query_embedding,
+                    top_k=k,
+                    filters=filters,
                 )
         except Exception as e:
             yield {"type": "error", "code": "RETRIEVAL_UNAVAILABLE", "message": str(e)}
@@ -592,7 +594,8 @@ class QueryPipeline:
         if self.reranker is not None and chunk_results:
             try:
                 chunk_results = self.reranker.rerank(
-                    query=question, documents=chunk_results,
+                    query=effective_question,
+                    documents=chunk_results,
                     top_k=self.top_k * 2,
                 )
             except Exception as e:
@@ -621,23 +624,35 @@ class QueryPipeline:
         generation_time = (time.time() - gen_t0) * 1000
 
         # 4) 来源
-        yield {"type": "sources", "sources": [
-            {"file_name": s.file_name, "content": s.content[:200], "score": s.score,
-             "source_type": s.source_type}
-            for s in sources_dedup
-        ]}
+        yield {
+            "type": "sources",
+            "sources": [
+                {
+                    "file_name": s.file_name,
+                    "content": s.content[:200],
+                    "score": s.score,
+                    "source_type": s.source_type,
+                }
+                for s in sources_dedup
+            ],
+        }
 
         # 5) Faithfulness（非阻塞，只记录）
         if self.faithfulness_evaluator is not None:
             try:
                 report = self.faithfulness_evaluator.evaluate(
-                    question=question, answer=full_answer, context_docs=context_docs,
+                    question=question,
+                    answer=full_answer,
+                    context_docs=context_docs,
                 )
-                yield {"type": "faithfulness", "result": report.result.value, "score": report.score,
-                       "summary": report.summary}
+                yield {
+                    "type": "faithfulness",
+                    "result": report.result.value,
+                    "score": report.score,
+                    "summary": report.summary,
+                }
                 if report.degraded and report.unsupported_claims > 0:
-                    yield {"type": "degraded_warning",
-                           "message": "部分回答无检索支撑，请注意甄别"}
+                    yield {"type": "degraded_warning", "message": "部分回答无检索支撑，请注意甄别"}
             except Exception:
                 pass
 
@@ -645,8 +660,10 @@ class QueryPipeline:
         if self.audit_store is not None:
             try:
                 record = AuditRecord(
-                    question=question, answer=full_answer,
-                    retrieval_time_ms=retrieval_time, generation_time_ms=generation_time,
+                    question=question,
+                    answer=full_answer,
+                    retrieval_time_ms=retrieval_time,
+                    generation_time_ms=generation_time,
                     total_time_ms=(time.time() - t0) * 1000,
                     sources=[
                         {
@@ -654,7 +671,8 @@ class QueryPipeline:
                             "score": s.score,
                             "source_type": s.source_type,
                         }
-                             for s in sources_dedup],
+                        for s in sources_dedup
+                    ],
                 )
                 self.audit_store.append(record)
             except Exception:
@@ -679,9 +697,7 @@ class QueryPipeline:
             source = self._short_name(meta.get("file_path", "unknown"))
             context_parts.append(f"[{source}]\n{doc.content}")
         context_text = (
-            "\n---\n".join(context_parts)
-            if context_parts
-            else "（知识库中未找到相关文档）"
+            "\n---\n".join(context_parts) if context_parts else "（知识库中未找到相关文档）"
         )
 
         system_prompt = (
@@ -699,9 +715,7 @@ class QueryPipeline:
                 {"role": "system", "content": system_prompt},
                 {
                     "role": "user",
-                    "content": (
-                        f"检索到的文档片段：\n{context_text}\n\n用户问题: {question}"
-                    ),
+                    "content": (f"检索到的文档片段：\n{context_text}\n\n用户问题: {question}"),
                 },
             ],
             temperature=0.3,
@@ -722,6 +736,7 @@ class QueryPipeline:
             return result["embedding"]
         else:
             from qa.pipelines.components.embedder import embed_query
+
             return embed_query(question)
 
     def _retrieve_chunks(
@@ -749,15 +764,25 @@ class QueryPipeline:
         )
 
     @staticmethod
-    def _is_low_risk_context(context_docs: list[Document]) -> bool:
+    def _is_low_risk_context(
+        chunk_results: list[Document], reranker_ran: bool = False
+    ) -> bool:
         """判断是否为低风险场景（可跳过 Faithfulness 校验）
 
-        低风险条件：检索结果的最高分 ≥ 0.95（表示高度相关）
+        低风险条件：Reranker 已执行且最高 rerank 分数 ≥ 0.95，
+        表示检索结果高度相关、幻觉风险低。
+
+        仅在 Reranker 执行时判定：Reranker 输出的是 0-1 区间的绝对相关性
+        分数，0.95 阈值有明确含义。未启用 Reranker 时 chunk_results 的
+        score 是 RRF 归一化展示分数（最高值恒为 1.0），不反映绝对相关性，
+        不能据此跳过校验，否则会导致所有混合检索结果都被误判为低风险。
         标准答案场景由 Early Exit 提前处理。
         """
-        if not context_docs:
+        if not chunk_results:
             return True
-        max_score = max((d.score or 0.0) for d in context_docs)
+        if not reranker_ran:
+            return False
+        max_score = max((d.score or 0.0) for d in chunk_results)
         return max_score >= 0.95
 
     def _merge_chunks(self, chunks: list[Document]) -> list[Document]:
@@ -848,8 +873,9 @@ class QueryPipeline:
                 name = "_".join(parts[-2:])
         return name
 
-    def _generate(self, question: str, context_docs: list[Document],
-                   conversation_history: str = "") -> str:
+    def _generate(
+        self, question: str, context_docs: list[Document], conversation_history: str = ""
+    ) -> str:
         """调用 LLM 生成回答
 
         使用 OpenAI 兼容 API 直接调用（支持流式和非流式）。
@@ -911,9 +937,7 @@ class QueryPipeline:
                 {"role": "system", "content": system_prompt},
                 {
                     "role": "user",
-                    "content": (
-                        f"检索到的文档片段：\n{context_text}\n\n用户问题: {question}"
-                    ),
+                    "content": (f"检索到的文档片段：\n{context_text}\n\n用户问题: {question}"),
                 },
             ],
             temperature=0.3,

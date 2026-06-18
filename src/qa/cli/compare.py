@@ -39,9 +39,7 @@ def compare(
     query: str = typer.Argument(..., help="测试查询文本"),
     top_k: int = typer.Option(5, "--top-k", "-k", help="每种模式的检索结果数"),
     format: str = typer.Option("text", "--format", "-f", help="输出格式: text | json"),
-    show_all: bool = typer.Option(
-        False, "--all", "-a", help="显示所有候选结果（不截断内容）"
-    ),
+    show_all: bool = typer.Option(False, "--all", "-a", help="显示所有候选结果（不截断内容）"),
 ):
     """对比三种检索模式的结果差异"""
     settings = get_settings()
@@ -56,7 +54,11 @@ def compare(
 
 
 def _compare_inner(
-    query: str, top_k: int, format: str, show_all: bool, settings,
+    query: str,
+    top_k: int,
+    format: str,
+    show_all: bool,
+    settings,
 ) -> None:
     """内部执行比较（包装在 try/finally 中以恢复 settings）"""
     # 初始化向量存储
@@ -70,6 +72,11 @@ def _compare_inner(
     if store.count_chunks() == 0:
         console.print("[red]知识库为空，请先导入文档[/red]")
         raise typer.Exit(1)
+
+    # 构建 BM25 全量索引（与 server/CLI 共享同一构建逻辑）
+    from qa.pipelines.factory import build_bm25_index
+
+    bm25_index = build_bm25_index(settings, store)
 
     # 嵌入查询
     try:
@@ -91,6 +98,7 @@ def _compare_inner(
         store_manager=store,
         vector_weight=settings.retrieval.hybrid_vector_weight,
         top_k=top_k,
+        bm25_index=bm25_index,
     )
     t0 = time.time()
     hybrid_results = hybrid.retrieve(
@@ -105,6 +113,7 @@ def _compare_inner(
         store_manager=store,
         vector_weight=0.0,  # 纯 BM25
         top_k=top_k,
+        bm25_index=bm25_index,
     )
     t0 = time.time()
     bm25_results = bm25_hybrid.retrieve(
@@ -252,15 +261,17 @@ def _results_to_dict(results: list) -> list[dict[str, Any]]:
     data = []
     for doc in results:
         meta = doc.meta or {}
-        data.append({
-            "id": doc.id,
-            "file_name": _short_name(meta.get("file_path", "unknown")),
-            "score": round(doc.score or 0.0, 4),
-            "vec_score": round(meta.get("vec_score", 0.0), 4),
-            "hybrid_score": round(meta.get("hybrid_score", 0.0), 4),
-            "source_type": meta.get("source_type", ""),
-            "content_preview": (doc.content or "")[:200],
-        })
+        data.append(
+            {
+                "id": doc.id,
+                "file_name": _short_name(meta.get("file_path", "unknown")),
+                "score": round(doc.score or 0.0, 4),
+                "vec_score": round(meta.get("vec_score", 0.0), 4),
+                "hybrid_score": round(meta.get("hybrid_score", 0.0), 4),
+                "source_type": meta.get("source_type", ""),
+                "content_preview": (doc.content or "")[:200],
+            }
+        )
     return data
 
 

@@ -61,6 +61,7 @@ class SearchRequest(BaseModel):
 _store = None
 _query_pipeline = None
 _index_pipeline = None
+_bm25_index = None
 
 
 def get_store():
@@ -75,6 +76,31 @@ def get_store():
     return _store
 
 
+def get_bm25_index():
+    """获取（惰性构建）全量 BM25 索引单例。
+
+    供 get_query_pipeline() 与 warmup() 共享，避免预热结果被丢弃
+    （M6 review finding #1/#9）。
+    """
+    global _bm25_index
+    if _bm25_index is None:
+        from qa.pipelines.factory import build_bm25_index
+
+        _bm25_index = build_bm25_index(get_settings(), get_store())
+    return _bm25_index
+
+
+def reset_runtime_singletons():
+    """重建索引后调用：清空 pipeline/BM25/缓存单例，使下次请求重建。
+
+    索引版本变更后，旧 BM25 索引与查询缓存均失效。
+    """
+    global _query_pipeline, _bm25_index
+    _query_pipeline = None
+    _bm25_index = None
+    # 查询缓存按 store_version 自动失效，无需手动清理
+
+
 def get_query_pipeline():
     global _query_pipeline
     if _query_pipeline is None:
@@ -82,6 +108,7 @@ def get_query_pipeline():
         reranker = None
         if settings.rerank.enabled:
             from qa.pipelines.components.reranker import Reranker
+
             reranker = Reranker(
                 model=settings.rerank.model,
                 api_base_url=settings.rerank.api_base_url,
@@ -92,6 +119,7 @@ def get_query_pipeline():
         early_exit_matcher = None
         if settings.early_exit.enabled:
             from qa.pipelines.components.early_exit import EarlyExitMatcher
+
             early_exit_matcher = EarlyExitMatcher(
                 store_path=settings.early_exit.store_path,
                 fuzzy_threshold=settings.early_exit.fuzzy_threshold,
@@ -102,29 +130,40 @@ def get_query_pipeline():
         faithfulness_evaluator = None
         if settings.faithfulness.enabled:
             from qa.pipelines.components.faithfulness import FaithfulnessEvaluator
+
             faithfulness_evaluator = FaithfulnessEvaluator(
                 enabled=True,
                 threshold=settings.faithfulness.threshold,
                 max_claims=settings.faithfulness.max_claims,
                 judge_model=settings.faithfulness.judge_model,
+                judge_api_base_url=settings.faithfulness.judge_api_base_url,
             )
 
         # 初始化审核队列
         from qa.pipelines.components.review_queue import ReviewWorkflow
+
         review_workflow = ReviewWorkflow()
         review_workflow.ensure_loaded()
 
         # 初始化审计日志
         from qa.pipelines.components.audit_logger import AuditStore
+
         audit_store = AuditStore()
 
         # 初始化 OpenTelemetry 追踪
         from qa.pipelines.components.tracing import init_tracing
+
         init_tracing(
             service_name=settings.otel.service_name,
             otlp_endpoint=settings.otel.endpoint,
             enabled=settings.otel.enabled,
         )
+
+        # 初始化查询改写器 / 查询缓存（M6: 原本配置存在但未接入）
+        from qa.pipelines.factory import build_query_cache, build_query_rewriter
+
+        query_rewriter = build_query_rewriter(settings)
+        query_cache = build_query_cache(settings, get_store())
 
         _query_pipeline = QueryPipeline(
             store_manager=get_store(),
@@ -137,6 +176,9 @@ def get_query_pipeline():
             faithfulness_evaluator=faithfulness_evaluator,
             review_workflow=review_workflow,
             audit_store=audit_store,
+            query_rewriter=query_rewriter,
+            query_cache=query_cache,
+            bm25_index=get_bm25_index(),
         )
     return _query_pipeline
 
@@ -161,28 +203,28 @@ async def warmup():
     """服务启动预热
 
     预加载 store、BM25 索引、embedder，消除首请求延迟尖峰。
-    预热失败不阻塞服务启动。
+    预热失败不阻塞服务启动。所有阻塞调用走 to_thread，避免卡住事件循环。
     """
+    import asyncio
+
     logger.info("🚀 服务启动预热中...")
 
     # 1) 预热 Store（加载向量索引）
     try:
         store = get_store()
-        chunk_count = store.count_chunks()
+        chunk_count = await asyncio.to_thread(store.count_chunks)
         logger.info(f"  ✅ Store 加载完成: {chunk_count} chunks")
     except Exception as e:
         logger.warning(f"  ⚠️ Store 预热失败（不阻塞启动）: {e}")
 
-    # 2) 预热 BM25 索引
+    # 2) 预热 BM25 索引（复用单例，避免预热结果被丢弃）
     try:
         settings = get_settings()
         if settings.retrieval.use_hybrid:
-            from qa.pipelines.components.bm25_index import load_or_build
-
             store = get_store()
-            if store.count_chunks() > 0:
-                bm25_idx = load_or_build(store)
-                if bm25_idx.is_built:
+            if await asyncio.to_thread(store.count_chunks) > 0:
+                bm25_idx = await asyncio.to_thread(get_bm25_index)
+                if bm25_idx is not None and bm25_idx.is_built:
                     logger.info(f"  ✅ BM25 索引预热完成: {bm25_idx.total_docs} 文档")
                 else:
                     logger.info("  ℹ️  BM25 索引未构建（知识库为空）")
@@ -195,7 +237,7 @@ async def warmup():
     try:
         from qa.pipelines.components.embedder import embed_query
 
-        test_emb = embed_query("预热测试")
+        test_emb = await asyncio.to_thread(embed_query, "预热测试")
         if test_emb:
             logger.info(f"  ✅ Embedder 预热完成: dim={len(test_emb)}")
     except Exception as e:
@@ -250,6 +292,7 @@ async def ask_stream(req: AskRequest):
             filters=req.filters,
         ):
             import json
+
             event_type = event.get("type", "data")
             data = json.dumps(event, ensure_ascii=False)
             yield f"event: {event_type}\ndata: {data}\n\n"
@@ -272,13 +315,19 @@ async def ask_stream(req: AskRequest):
 async def list_sessions(limit: int = 20):
     """列出最近会话"""
     from qa.pipelines.components.session_store import SessionStore
+
     store = SessionStore()
     store.load()
     sessions = store.list_recent(limit=limit)
     return {
         "sessions": [
-            {"id": s.id, "title": s.title or "(新会话)", "turns": len(s.turns),
-             "updated_at": s.updated_at, "created_at": s.created_at}
+            {
+                "id": s.id,
+                "title": s.title or "(新会话)",
+                "turns": len(s.turns),
+                "updated_at": s.updated_at,
+                "created_at": s.created_at,
+            }
             for s in sessions
         ]
     }
@@ -288,6 +337,7 @@ async def list_sessions(limit: int = 20):
 async def delete_session(session_id: str):
     """删除会话"""
     from qa.pipelines.components.session_store import SessionStore
+
     store = SessionStore()
     store.load()
     if store.delete(session_id):
@@ -321,26 +371,30 @@ async def search(req: SearchRequest):
 
     # 按文件聚合：同一个文件的多个片段合并为一条结果
     from collections import defaultdict
+
     file_groups: dict[str, list] = defaultdict(list)
     for s in filtered:
         file_groups[s.file_name].append(s)
 
     # 每个文件取最高分片段作为代表，统计 chunk 数
     from pathlib import Path as _Path
+
     grouped = []
     for file_name, chunks in file_groups.items():
         best = max(chunks, key=lambda x: x.score)
         # 只保留文件名
         short_name = _Path(file_name).name
-        grouped.append({
-            "file_name": short_name,
-            "content": best.content,
-            "source": best.source,
-            "category": best.category,
-            "effective_date": best.effective_date,
-            "score": round(best.score, 4),
-            "chunks": len(chunks),  # 该文件命中的片段数
-        })
+        grouped.append(
+            {
+                "file_name": short_name,
+                "content": best.content,
+                "source": best.source,
+                "category": best.category,
+                "effective_date": best.effective_date,
+                "score": round(best.score, 4),
+                "chunks": len(chunks),  # 该文件命中的片段数
+            }
+        )
 
     # 按分数排序
     grouped.sort(key=lambda x: -x["score"])
@@ -395,6 +449,7 @@ async def upload(
 
     # 保存上传文件到临时目录
     import tempfile
+
     tmp_dir = Path(tempfile.mkdtemp(prefix="qa_upload_"))
     file_paths = []
 
@@ -417,26 +472,28 @@ async def upload(
                 timeout=pipe_timeout,
             )
         except TimeoutError:
-            raise RuntimeError(
-                f"索引超时 ({pipe_timeout}s)。查看服务端日志确认卡在哪一步。"
-            )
+            raise RuntimeError(f"索引超时 ({pipe_timeout}s)。查看服务端日志确认卡在哪一步。")
 
         # 显式持久化（StoreWriter 不再自动 save）
         store = get_store()
         await asyncio.to_thread(store.save)
 
+        # 索引已变更：清空 pipeline/BM25 单例，查询缓存按版本自动失效
+        reset_runtime_singletons()
+
         return {
             "files_count": result.files_count,
             "documents_written": result.documents_written,
             "documents_skipped": result.documents_skipped,
-            "segments": result.chunk_count,       # 检索用片段数
-            "parents": result.parent_count,       # 上下文用大块数
+            "segments": result.chunk_count,  # 检索用片段数
+            "parents": result.parent_count,  # 上下文用大块数
             "errors": result.errors,
             "time_ms": result.total_time_ms,
         }
     finally:
         # 清理临时文件
         import shutil
+
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
@@ -476,6 +533,7 @@ def _mount_frontend(app_instance):
 def _get_answer_store():
     """获取标准答案库存储"""
     from qa.pipelines.components.early_exit import StandardAnswer, StandardAnswerStore
+
     settings = get_settings()
     store = StandardAnswerStore(store_path=settings.early_exit.store_path)
     store.load()
@@ -484,8 +542,11 @@ def _get_answer_store():
 
 @app.get("/api/v1/qa/answers")
 async def list_answers(
-    category: str = "", keyword: str = "", status: str = "",
-    page: int = 1, page_size: int = 50,
+    category: str = "",
+    keyword: str = "",
+    status: str = "",
+    page: int = 1,
+    page_size: int = 50,
 ):
     """标准答案列表"""
     store, _ = _get_answer_store()
@@ -500,7 +561,7 @@ async def list_answers(
     # 分页
     total = len(answers)
     start = (page - 1) * page_size
-    items = answers[start:start + page_size]
+    items = answers[start : start + page_size]
     return {
         "total": total,
         "page": page,
@@ -518,7 +579,8 @@ async def add_answer(req: dict):
     if not q or not a:
         raise HTTPException(status_code=400, detail="question 和 answer 为必填字段")
     answer = std_answer_cls(
-        question=q, answer=a,
+        question=q,
+        answer=a,
         category=req.get("category", ""),
         source=req.get("source", "api"),
         match_strategy=req.get("match_strategy", "both"),
@@ -565,6 +627,7 @@ async def add_answer_alias(answer_id: str, req: dict):
 async def list_reviews(status: str = "", page: int = 1, page_size: int = 20):
     """审核队列列表"""
     from qa.pipelines.components.review_queue import ReviewWorkflow
+
     workflow = ReviewWorkflow()
     workflow.ensure_loaded()
     items = workflow.store.list_all(status=status or None)
@@ -574,7 +637,7 @@ async def list_reviews(status: str = "", page: int = 1, page_size: int = 20):
         "total": total,
         "page": page,
         "page_size": page_size,
-        "items": [i.to_dict() for i in items[start:start + page_size]],
+        "items": [i.to_dict() for i in items[start : start + page_size]],
     }
 
 
@@ -583,13 +646,19 @@ async def label_review(item_id: str, req: dict):
     """标注审核项"""
     from qa.pipelines.components.early_exit import StandardAnswerStore
     from qa.pipelines.components.review_queue import ReviewWorkflow
+
     settings = get_settings()
     workflow = ReviewWorkflow()
     workflow.ensure_loaded()
     label = req.get("label", "")
     std_store = StandardAnswerStore(store_path=settings.early_exit.store_path)
-    if workflow.label(item_id, label, reviewer=req.get("reviewer", "web"),
-                      comment=req.get("comment", ""), standard_answer_store=std_store):
+    if workflow.label(
+        item_id,
+        label,
+        reviewer=req.get("reviewer", "web"),
+        comment=req.get("comment", ""),
+        standard_answer_store=std_store,
+    ):
         return {"id": item_id, "label": label}
     raise HTTPException(status_code=400, detail="标注失败（可能已审核或不存在）")
 
@@ -598,6 +667,7 @@ async def label_review(item_id: str, req: dict):
 async def review_stats():
     """审核统计"""
     from qa.pipelines.components.review_queue import ReviewWorkflow
+
     workflow = ReviewWorkflow()
     workflow.ensure_loaded()
     return workflow.get_stats().to_dict()
@@ -607,6 +677,7 @@ async def review_stats():
 async def metrics():
     """可观测性指标"""
     from qa.pipelines.components.tracing import get_metrics
+
     return get_metrics().snapshot().to_dict()
 
 

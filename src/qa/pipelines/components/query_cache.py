@@ -15,6 +15,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import threading
 import time
 from collections import OrderedDict
 from dataclasses import dataclass
@@ -65,6 +66,7 @@ class QueryCache:
         self._last_version: str = ""
         self._hit_count = 0
         self._miss_count = 0
+        self._lock = threading.Lock()
 
     def _make_key(
         self,
@@ -94,29 +96,31 @@ class QueryCache:
         if not self.enabled:
             return None
 
-        # 检查版本失效
-        if not self._version_valid():
-            logger.debug("查询缓存: 索引版本变更，整体失效")
-            self.invalidate_all()
-            return None
-
         key = self._make_key(question, top_k, filters)
-        entry = self._cache.get(key)
 
-        if entry is None:
-            self._miss_count += 1
-            return None
+        with self._lock:
+            # 版本检查 + 失效在同一锁内原子完成，避免并发下重复清理
+            if not self._version_valid_locked():
+                logger.debug("查询缓存: 索引版本变更，整体失效")
+                self._invalidate_all_locked()
+                return None
 
-        if entry.expired:
-            self._cache.pop(key, None)
-            self._miss_count += 1
-            return None
+            entry = self._cache.get(key)
 
-        # LRU: 移动到末尾（最近使用）
-        self._cache.move_to_end(key)
-        self._hit_count += 1
-        logger.debug(f"查询缓存命中: key={key[:12]}...")
-        return entry.result
+            if entry is None:
+                self._miss_count += 1
+                return None
+
+            if entry.expired:
+                self._cache.pop(key, None)
+                self._miss_count += 1
+                return None
+
+            # LRU: 移动到末尾（最近使用）
+            self._cache.move_to_end(key)
+            self._hit_count += 1
+            logger.debug(f"查询缓存命中: key={key[:12]}...")
+            return entry.result
 
     def put(
         self,
@@ -131,21 +135,27 @@ class QueryCache:
 
         key = self._make_key(question, top_k, filters)
 
-        # LRU 淘汰
-        if len(self._cache) >= self.max_size:
-            self._cache.popitem(last=False)
+        with self._lock:
+            # 仅在新增 key 时淘汰，覆盖已有 key 不应驱逐其他条目
+            if key not in self._cache and len(self._cache) >= self.max_size:
+                self._cache.popitem(last=False)
 
-        entry = QueryCacheEntry(
-            key=key,
-            result=result,
-            created_at=time.time(),
-            ttl=self.ttl_seconds,
-        )
-        self._cache[key] = entry
-        logger.debug(f"查询缓存写入: key={key[:12]}...")
+            entry = QueryCacheEntry(
+                key=key,
+                result=result,
+                created_at=time.time(),
+                ttl=self.ttl_seconds,
+            )
+            self._cache[key] = entry
+            logger.debug(f"查询缓存写入: key={key[:12]}...")
 
     def invalidate_all(self) -> None:
         """清空全部缓存"""
+        with self._lock:
+            self._invalidate_all_locked()
+
+    def _invalidate_all_locked(self) -> None:
+        """清空全部缓存（调用方需已持有 _lock）"""
         count = len(self._cache)
         self._cache.clear()
         self._last_version = self._get_current_version()
@@ -153,7 +163,12 @@ class QueryCache:
             logger.info(f"查询缓存已清空: {count} 条")
 
     def _version_valid(self) -> bool:
-        """检查索引版本是否一致"""
+        """检查索引版本是否一致（线程安全包装）"""
+        with self._lock:
+            return self._version_valid_locked()
+
+    def _version_valid_locked(self) -> bool:
+        """检查索引版本是否一致（调用方需已持有 _lock）"""
         if self.store_manager is None:
             return True
         current = self._get_current_version()

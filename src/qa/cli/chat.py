@@ -197,18 +197,10 @@ WELCOME_TEXT = """
 @chat_app.callback(invoke_without_command=True)
 def chat(
     top_k: int = typer.Option(5, "--top-k", help="检索返回的最大文档数"),
-    history: int = typer.Option(
-        5, "--history", help="保留最近 N 轮对话上下文"
-    ),
-    session_id: str | None = typer.Option(
-        None, "--session", "-s", help="恢复已有会话 ID"
-    ),
-    list_sessions: bool = typer.Option(
-        False, "--list", "-l", help="列出最近会话"
-    ),
-    resume: bool = typer.Option(
-        False, "--resume", "-r", help="恢复最近未关闭的会话"
-    ),
+    history: int = typer.Option(5, "--history", help="保留最近 N 轮对话上下文"),
+    session_id: str | None = typer.Option(None, "--session", "-s", help="恢复已有会话 ID"),
+    list_sessions: bool = typer.Option(False, "--list", "-l", help="列出最近会话"),
+    resume: bool = typer.Option(False, "--resume", "-r", help="恢复最近未关闭的会话"),
 ):
     """进入交互式会话模式
 
@@ -259,6 +251,7 @@ def chat(
     early_exit_matcher = None
     if settings.early_exit.enabled:
         from qa.pipelines.components.early_exit import EarlyExitMatcher
+
         early_exit_matcher = EarlyExitMatcher(
             store_path=settings.early_exit.store_path,
             fuzzy_threshold=settings.early_exit.fuzzy_threshold,
@@ -269,29 +262,39 @@ def chat(
     faithfulness_evaluator = None
     if settings.faithfulness.enabled:
         from qa.pipelines.components.faithfulness import FaithfulnessEvaluator
+
         faithfulness_evaluator = FaithfulnessEvaluator(
             enabled=True,
             threshold=settings.faithfulness.threshold,
             max_claims=settings.faithfulness.max_claims,
             judge_model=settings.faithfulness.judge_model,
+            judge_api_base_url=settings.faithfulness.judge_api_base_url,
         )
 
     # 初始化审核队列
     from qa.pipelines.components.review_queue import ReviewWorkflow
+
     review_workflow = ReviewWorkflow()
     review_workflow.ensure_loaded()
 
     # 初始化审计日志
     from qa.pipelines.components.audit_logger import AuditStore
+
     audit_store = AuditStore()
 
     # 初始化 OpenTelemetry 追踪
     from qa.pipelines.components.tracing import init_tracing
+
     init_tracing(
         service_name=settings.otel.service_name,
         otlp_endpoint=settings.otel.endpoint,
         enabled=settings.otel.enabled,
     )
+
+    # 初始化查询改写器 / 查询缓存 / BM25 索引（M6: 原本配置存在但未接入）
+    from qa.pipelines.factory import build_query_components
+
+    query_rewriter, query_cache, bm25_index = build_query_components(settings, store)
 
     pipeline = QueryPipeline(
         store_manager=store,
@@ -301,6 +304,9 @@ def chat(
         faithfulness_evaluator=faithfulness_evaluator,
         review_workflow=review_workflow,
         audit_store=audit_store,
+        query_rewriter=query_rewriter,
+        query_cache=query_cache,
+        bm25_index=bm25_index,
     )
 
     # 持久化会话
@@ -344,7 +350,7 @@ def chat(
                 session.show_status()
 
             elif cmd.startswith("/filter "):
-                filter_str = user_input[len("/filter "):].strip()
+                filter_str = user_input[len("/filter ") :].strip()
                 session.set_filter(filter_str)
 
             elif cmd == "/clear":

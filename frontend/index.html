@@ -1317,9 +1317,11 @@ function addMessage(role, content, sources) {
   return msg;
 }
 
-// ── Markdown 渲染（统一 GFM 配置） ──
+// ── Markdown 渲染（统一 GFM 配置 + XSS 净化） ──
 function renderMarkdown(text) {
-  return marked.parse(text, { breaks: true, gfm: true });
+  // marked v5+ 不再内置 sanitizer；用 DOMPurify 净化输出，
+  // 防止 LLM 响应或用户输入中的 <img onerror> 等脚本执行。
+  return DOMPurify.sanitize(marked.parse(text, { breaks: true, gfm: true }));
 }
 
 // ── 引用后处理 ──
@@ -1367,11 +1369,34 @@ function focusSource(el, idx) {
 // ── Faithfulness 可信度徽章 ──
 function renderFaithfulnessBadge(faithfulness) {
   if (!faithfulness || !faithfulness.result) return '';
-  const result = faithfulness.result;
-  const score = faithfulness.score || 0;
-  const labels = { pass: '✅ 可信', partial: '⚠️ 部分可信', fail: '❌ 不可信', skipped: 'ℹ️ 未校验' };
-  const label = labels[result] || result;
+  // 白名单校验 result，避免未预期的值进入 CSS class 或标签内容
+  const VALID_RESULTS = { pass: '✅ 可信', partial: '⚠️ 部分可信', fail: '❌ 不可信', skipped: 'ℹ️ 未校验' };
+  const result = VALID_RESULTS[faithfulness.result] ? faithfulness.result : 'skipped';
+  const label = VALID_RESULTS[result];
+  // 数值强制转换，防止非数字字符串产生 NaN%
+  const score = Number(faithfulness.score) || 0;
   return `<div class="faithfulness-badge ${result}">${label} (${(score*100).toFixed(0)}%)</div>`;
+}
+
+// ── 来源卡片渲染（renderMessage 与 finalizeMessage 共享，避免两套样式） ──
+function renderSourceItem(s, i) {
+  return `
+      <div class="source-item" onclick="this.classList.toggle('expanded')">
+        <span class="source-badge">${i+1}</span>
+        ${getFileIcon(s.file_name)}
+        <span class="source-title">${escHtml(s.file_name||'unknown')}</span>
+        <span class="source-score">${renderScoreStars(s.score)}</span>
+        <div class="source-content">${escHtml((s.content||'').substring(0,200))}${(s.content||'').length > 200 ? '<br><button onclick="event.stopPropagation();this.parentElement.querySelector(\'.full-text\').style.display=\'block\';this.style.display=\'none\'">展开全文</button><div class="full-text" style="display:none">'+escHtml(s.content.substring(200))+'</div>' : ''}</div>
+      </div>`;
+}
+
+function renderSourcesSection(sources) {
+  if (!sources || sources.length === 0) return '';
+  const items = sources.map((s,i) => renderSourceItem(s, i)).join('');
+  return `<div class="sources-section">
+    <div class="sources-toggle" onclick="toggleSources(this)">📚 <span>${sources.length} 个引用来源</span><span style="font-size:10px;margin-left:4px;">▼</span></div>
+    <div class="sources-list" style="display:none">${items}</div>
+  </div>`;
 }
 
 function renderMessage(msg) {
@@ -1382,24 +1407,14 @@ function renderMessage(msg) {
   div.id = 'msg-' + msg.id;
   const avatar = msg.role === 'user' ? '👤' : '🤖';
   const author = msg.role === 'user' ? '您' : '助手';
-  let sourcesHTML = '';
-  if (msg.sources && msg.sources.length > 0) {
-    const items = msg.sources.map((s,i) => `
-      <div class="source-item" onclick="this.classList.toggle('expanded')">
-        <span class="source-badge">${i+1}</span>
-        <span class="source-title">${escHtml(s.file_name||'unknown')}</span>
-        <span class="source-score">${s.score?s.score.toFixed(3):''}</span>
-        <div class="source-meta">来源: ${escHtml(s.source||'')} · 类别: ${escHtml(s.category||'')}</div>
-        <div class="source-content">${escHtml(s.content||'')}</div>
-      </div>
-    `).join('');
-    sourcesHTML = `<div class="sources-section">
-      <div class="sources-toggle" onclick="toggleSources(this)">📚 <span>${msg.sources.length} 个引用来源</span><span style="font-size:10px;margin-left:4px;">▼</span></div>
-      <div class="sources-list" style="display:none">${items}</div>
-    </div>`;
+  // 助手回答统一走引用处理 + 可信度徽章 + 共享来源卡片
+  let bodyHTML = renderMarkdown(msg.content);
+  if (msg.role === 'assistant') {
+    bodyHTML = processCitations(bodyHTML, msg.sources);
+    if (msg.faithfulness) bodyHTML += renderFaithfulnessBadge(msg.faithfulness);
   }
   div.innerHTML = `<div class="message-header"><span class="message-avatar ${msg.role}">${avatar}</span><span class="message-author">${author}</span><span class="message-time">${msg.timestamp}</span></div>
-    <div class="message-body">${renderMarkdown(msg.content)}</div>${sourcesHTML}`;
+    <div class="message-body">${bodyHTML}</div>${renderSourcesSection(msg.sources)}`;
   messagesContainer.appendChild(div);
 }
 
@@ -1470,19 +1485,7 @@ function finalizeMessage(msgId, content, sources, faithfulness) {
   const existingSources = el.querySelector('.sources-section');
   if (existingSources) existingSources.remove();
   if (sources && sources.length > 0) {
-    const items = sources.map((s,i) => `
-      <div class="source-item" onclick="this.classList.toggle('expanded')">
-        <span class="source-badge">${i+1}</span>
-        ${getFileIcon(s.file_name)}
-        <span class="source-title">${escHtml(s.file_name||'unknown')}</span>
-        <span class="source-score">${renderScoreStars(s.score)}</span>
-        <div class="source-content">${escHtml((s.content||'').substring(0,200))}${(s.content||'').length > 200 ? '<br><button onclick="event.stopPropagation();this.parentElement.querySelector(\'.full-text\').style.display=\'block\';this.style.display=\'none\'">展开全文</button><div class="full-text" style="display:none">'+escHtml(s.content.substring(200))+'</div>' : ''}</div>
-      </div>`).join('');
-    const sourcesHTML = `<div class="sources-section">
-      <div class="sources-toggle" onclick="toggleSources(this)">📚 <span>${sources.length} 个引用来源</span><span style="font-size:10px;margin-left:4px;">▼</span></div>
-      <div class="sources-list" style="display:none">${items}</div>
-    </div>`;
-    el.insertAdjacentHTML('beforeend', sourcesHTML);
+    el.insertAdjacentHTML('beforeend', renderSourcesSection(sources));
   }
   scrollToBottom();
 }
@@ -1999,5 +2002,6 @@ renderHistory();
 questionInput.focus();
 </script>
 <script src="marked.min.js"></script>
+<script src="purify.min.js"></script>
 </body>
 </html>

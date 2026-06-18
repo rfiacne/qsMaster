@@ -47,6 +47,7 @@ class LLMConfig(BaseSettings):
             return self.api_key
         if self.api_key_env:
             import os
+
             val = os.environ.get(self.api_key_env)
             if val:
                 return val
@@ -90,6 +91,7 @@ class EmbeddingConfig(BaseSettings):
             return self.api_key
         if self.api_key_env:
             import os
+
             val = os.environ.get(self.api_key_env)
             if val:
                 return val
@@ -139,7 +141,9 @@ class RetrievalConfig(BaseSettings):
         default=0.5, ge=0.0, le=1.0, description="AutoMergingRetriever 合并阈值"
     )
     min_score: float = Field(
-        default=0.01, ge=0.0, le=1.0,
+        default=0.01,
+        ge=0.0,
+        le=1.0,
         description="检索结果最低分数阈值（混合模式下 RRF 分数通常 0.005-0.05）",
     )
     use_hybrid: bool = Field(
@@ -147,7 +151,9 @@ class RetrievalConfig(BaseSettings):
         description="启用混合检索（BM25 关键词 + 向量语义）",
     )
     hybrid_vector_weight: float = Field(
-        default=0.5, ge=0.0, le=1.0,
+        default=0.5,
+        ge=0.0,
+        le=1.0,
         description="混合检索中向量检索权重，越高越依赖语义",
     )
     block_sizes: list[int] = Field(
@@ -155,7 +161,9 @@ class RetrievalConfig(BaseSettings):
         description="分层分块大小（字符数），[大块大小, 小块大小]",
     )
     rrf_k: int = Field(
-        default=35, ge=1, le=200,
+        default=35,
+        ge=1,
+        le=200,
         description="RRF 融合常数，越小排名区分度越大（默认 35）",
     )
 
@@ -195,7 +203,9 @@ class RerankConfig(BaseSettings):
         description="Reranker 模型名称",
     )
     top_k: int = Field(
-        default=5, ge=1, le=50,
+        default=5,
+        ge=1,
+        le=50,
         description="Reranker 重排后返回的结果数",
     )
 
@@ -206,6 +216,7 @@ class RerankConfig(BaseSettings):
             return self.api_key
         if self.api_key_env:
             import os
+
             val = os.environ.get(self.api_key_env)
             if val:
                 return val
@@ -233,7 +244,9 @@ class EarlyExitConfig(BaseSettings):
         description="启用 Early Exit（标准答案库匹配优先）",
     )
     fuzzy_threshold: float = Field(
-        default=0.82, ge=0.0, le=1.0,
+        default=0.82,
+        ge=0.0,
+        le=1.0,
         description="模糊匹配相似度阈值（低于此值不命中）",
     )
     store_path: str = Field(
@@ -256,16 +269,26 @@ class FaithfulnessConfig(BaseSettings):
         description="校验模式: llm | disabled",
     )
     threshold: float = Field(
-        default=0.7, ge=0.0, le=1.0,
+        default=0.7,
+        ge=0.0,
+        le=1.0,
         description="通过阈值：支撑比例 ≥ 此值算 PASS，< 此值算 FAIL（M6: 从 0.5 提升至 0.7）",
     )
     max_claims: int = Field(
-        default=10, ge=1, le=30,
+        default=10,
+        ge=1,
+        le=30,
         description="最多校验的声明数（超长回答按段落分段聚合，不再硬截断）",
     )
     judge_model: str = Field(
         default="",
         description="校验用模型名（空则复用 LLM 主模型；设置独立模型避免自评偏差）",
+    )
+    judge_api_base_url: str = Field(
+        default="",
+        description=(
+            "校验用独立 API 地址（空则复用 LLM 主地址；配合 judge_model 路由到独立评判端点）"
+        ),
     )
 
 
@@ -283,7 +306,9 @@ class QueryRewriteConfig(BaseSettings):
         description="改写用模型（空则复用 LLM 主模型）",
     )
     timeout_seconds: float = Field(
-        default=3.0, ge=0.5, le=30.0,
+        default=3.0,
+        ge=0.5,
+        le=30.0,
         description="LLM 改写调用超时（秒）",
     )
     term_map_path: str = Field(
@@ -302,11 +327,15 @@ class QueryCacheConfig(BaseSettings):
         description="启用查询级 LRU 缓存",
     )
     max_size: int = Field(
-        default=256, ge=16, le=65536,
+        default=256,
+        ge=16,
+        le=65536,
         description="LRU 缓存最大条目数",
     )
     ttl_seconds: float = Field(
-        default=300.0, ge=10.0, le=86400.0,
+        default=300.0,
+        ge=10.0,
+        le=86400.0,
         description="缓存 TTL（秒，默认 5 分钟）",
     )
 
@@ -387,9 +416,19 @@ class Settings(BaseSettings):
 
             # 递归合并各 section
             for section_key in (
-                "llm", "embedding", "vector_store", "retrieval", "indexing",
-                "server", "rerank", "early_exit", "faithfulness",
-                "query_rewrite", "query_cache", "pg", "otel",
+                "llm",
+                "embedding",
+                "vector_store",
+                "retrieval",
+                "indexing",
+                "server",
+                "rerank",
+                "early_exit",
+                "faithfulness",
+                "query_rewrite",
+                "query_cache",
+                "pg",
+                "otel",
             ):
                 if section_key in raw:
                     section_data = raw[section_key]
@@ -461,6 +500,7 @@ class Settings(BaseSettings):
                 "threshold": self.faithfulness.threshold,
                 "max_claims": self.faithfulness.max_claims,
                 "judge_model": self.faithfulness.judge_model or "(复用 LLM)",
+                "judge_api_base_url": self.faithfulness.judge_api_base_url or "(复用 LLM)",
             },
             "query_rewrite": {
                 "enabled": self.query_rewrite.enabled,

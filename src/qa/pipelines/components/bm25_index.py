@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import pickle
 import re
 import time
@@ -84,16 +85,10 @@ class GlobalBM25Index:
             return []
 
         raw_scores = self.index.get_scores(query_tokens)
-        scores = (
-            raw_scores.tolist()
-            if hasattr(raw_scores, "tolist")
-            else list(raw_scores)
-        )
+        scores = raw_scores.tolist() if hasattr(raw_scores, "tolist") else list(raw_scores)
 
         # 按分数降序排列
-        ranked = sorted(
-            enumerate(scores), key=lambda x: -x[1]
-        )
+        ranked = sorted(enumerate(scores), key=lambda x: -x[1])
 
         results: list[Document] = []
         for doc_idx, score in ranked[:top_k]:
@@ -109,10 +104,7 @@ class GlobalBM25Index:
             )
             results.append(doc)
 
-        logger.info(
-            f"BM25 检索完成: query=\"{query_text[:50]}\", "
-            f"{len(results)} 结果"
-        )
+        logger.info(f'BM25 检索完成: query="{query_text[:50]}", {len(results)} 结果')
         return results
 
     def persist_path(self, version: str | None = None) -> Path:
@@ -125,7 +117,10 @@ class GlobalBM25Index:
         return Path(self.persist_dir) / f"{v}.pkl"
 
     def save(self) -> str:
-        """持久化索引到磁盘
+        """持久化索引到磁盘（原子写入）
+
+        顺序：先写临时文件 → os.replace 原子替换 → 成功后才清理旧版本。
+        避免写入中途失败导致当前版本文件损坏且旧版本已被删除。
 
         Returns:
             持久化文件路径
@@ -136,9 +131,6 @@ class GlobalBM25Index:
         persist_dir = Path(self.persist_dir)
         persist_dir.mkdir(parents=True, exist_ok=True)
 
-        # 清理旧版本索引文件（同目录下非当前版本的文件）
-        self._clean_old_persists()
-
         path = self.persist_path()
         data = {
             "version": self.version,
@@ -146,8 +138,19 @@ class GlobalBM25Index:
             "doc_metas": self.doc_metas,
             "index": self.index,  # BM25Okapi 可 pickle
         }
-        with open(path, "wb") as f:
-            pickle.dump(data, f)
+        # 写入临时文件后原子替换，保证不会留下半截损坏文件
+        tmp_path = path.with_suffix(".pkl.tmp")
+        try:
+            with open(tmp_path, "wb") as f:
+                pickle.dump(data, f)
+        except Exception:
+            # 写入失败：清理临时文件，原文件保持不变
+            tmp_path.unlink(missing_ok=True)
+            raise
+        os.replace(tmp_path, path)
+
+        # 当前版本已安全落盘，再清理旧版本
+        self._clean_old_persists()
 
         size_mb = path.stat().st_size / (1024 * 1024)
         logger.info(
@@ -242,9 +245,7 @@ def load_or_build(
                 )
                 elapsed = (time.time() - t0) * 1000
                 logger.info(
-                    f"BM25 索引从磁盘加载完成: "
-                    f"{index.total_docs} 文档, "
-                    f"耗时={elapsed:.0f}ms"
+                    f"BM25 索引从磁盘加载完成: {index.total_docs} 文档, 耗时={elapsed:.0f}ms"
                 )
                 return index
             else:
@@ -285,11 +286,7 @@ def load_or_build(
     bm25 = BM25Okapi(tokenized_docs)
 
     build_elapsed = (time.time() - build_t0) * 1000
-    logger.info(
-        f"BM25 索引构建完成: "
-        f"{len(documents_text)} 文档, "
-        f"耗时={build_elapsed:.0f}ms"
-    )
+    logger.info(f"BM25 索引构建完成: {len(documents_text)} 文档, 耗时={build_elapsed:.0f}ms")
 
     index = GlobalBM25Index(
         index=bm25,
@@ -322,33 +319,14 @@ def _get_all_chunks(store_manager: Any) -> list[Document]:
         return []
 
     try:
-        # 使用空过滤器获取所有文档
-        # Haystack 的 filter_documents 支持空字典 / None 表示全量
+        # 空过滤器获取全量文档（Haystack filter_documents 支持 {} / None 表示全量）
         docs = store_manager.chunk_store.filter_documents(filters={})
         if docs is None:
             docs = []
         logger.debug(f"_get_all_chunks: 获取到 {len(docs)} 个文档")
         return docs
     except Exception as e:
-        logger.warning(f"获取全量 chunk 失败（尝试备用方式）: {e}")
-
-    # 备用方式：分页获取
-    try:
-        all_docs = []
-        batch_size = 500
-        offset = 0
-        while True:
-            batch = store_manager.chunk_store.filter_documents(
-                filters={},
-            )
-            if not batch:
-                break
-            all_docs.extend(batch)
-            if len(batch) < batch_size:
-                break
-            offset += batch_size
-        logger.debug(f"_get_all_chunks (备用): 获取到 {len(all_docs)} 个文档")
-        return all_docs
-    except Exception as e2:
-        logger.error(f"获取全量 chunk 完全失败: {e2}")
+        # 原备用分页路径调用同一 API 且未传 offset，会导致无限循环；
+        # filter_documents 不支持分页参数，故直接返回空并记录错误。
+        logger.error(f"获取全量 chunk 失败: {e}")
         return []

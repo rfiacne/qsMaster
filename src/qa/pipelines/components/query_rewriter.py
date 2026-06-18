@@ -25,7 +25,12 @@ logger = logging.getLogger(__name__)
 
 # 多意图连词（触发 LLM 判定的标志性词汇）
 INTENT_CONJUNCTIONS = [
-    "和", "与", "及", "以及", "分别", "同时",
+    "和",
+    "与",
+    "及",
+    "以及",
+    "分别",
+    "同时",
 ]
 
 # 证券清算常见专有术语（含"和"但不拆分的固定搭配）
@@ -93,16 +98,11 @@ class QueryRewriter:
                 return
 
             # 预编译正则（按长度降序排序，长词优先匹配）
-            sorted_terms = sorted(
-                self._term_map.keys(), key=len, reverse=True
-            )
+            sorted_terms = sorted(self._term_map.keys(), key=len, reverse=True)
             self._term_patterns = [
-                (re.compile(re.escape(term)), self._term_map[term])
-                for term in sorted_terms
+                (re.compile(re.escape(term)), self._term_map[term]) for term in sorted_terms
             ]
-            logger.info(
-                f"术语映射表加载完成: {len(self._term_patterns)} 条映射"
-            )
+            logger.info(f"术语映射表加载完成: {len(self._term_patterns)} 条映射")
         except (json.JSONDecodeError, OSError) as e:
             logger.warning(f"术语映射表加载失败: {e}")
 
@@ -190,7 +190,7 @@ class QueryRewriter:
             result = pattern.sub(replacement, result)
 
         if result != text:
-            logger.debug(f"术语归一化: \"{text}\" → \"{result}\"")
+            logger.debug(f'术语归一化: "{text}" → "{result}"')
 
         return result
 
@@ -239,8 +239,15 @@ class QueryRewriter:
         settings = get_settings()
         model = self.model or settings.llm.model
 
+        api_key = settings.llm.resolved_api_key
+        # 未配置 API 密钥时跳过 LLM 分解（回退到归一化文本），
+        # 不发送伪造的 sk-placeholder 凭据
+        if not api_key:
+            logger.debug("查询改写: 未配置 LLM API 密钥，跳过多意图分解")
+            return []
+
         client = OpenAI(
-            api_key=settings.llm.resolved_api_key or "sk-placeholder",
+            api_key=api_key,
             base_url=settings.llm.api_base_url,
             timeout=self.timeout_seconds,
         )
@@ -257,13 +264,13 @@ class QueryRewriter:
             "4. 只返回 JSON 数组，不要额外解释\n\n"
             "示例：\n"
             "问题: 'CSDC 登记和结算分别怎么操作'\n"
-            "输出: [\"CSDC 登记操作流程\", \"CSDC 结算操作流程\"]\n\n"
+            '输出: ["CSDC 登记操作流程", "CSDC 结算操作流程"]\n\n'
             "问题: '中登公司的作用是什么'\n"
-            "输出: [\"中登公司的作用是什么\"]\n\n"
+            '输出: ["中登公司的作用是什么"]\n\n'
             "问题: '清算和交收系统的运行规则'\n"
-            "输出: [\"清算和交收系统的运行规则\"]\n\n"
+            '输出: ["清算和交收系统的运行规则"]\n\n'
             "问题: '上交所和深交所的交易规则分别是什么'\n"
-            "输出: [\"上交所交易规则\", \"深交所交易规则\"]"
+            '输出: ["上交所交易规则", "深交所交易规则"]'
         )
 
         try:
@@ -281,9 +288,7 @@ class QueryRewriter:
             sub_questions = self._parse_llm_response(content)
 
             if sub_questions:
-                logger.info(
-                    f"LLM 多意图分解: {len(sub_questions)} 子问题"
-                )
+                logger.info(f"LLM 多意图分解: {len(sub_questions)} 子问题")
                 return sub_questions
 
             return []
@@ -302,19 +307,13 @@ class QueryRewriter:
         if json_match:
             try:
                 parsed = json.loads(json_match.group())
-                if isinstance(parsed, list) and all(
-                    isinstance(item, str) for item in parsed
-                ):
+                if isinstance(parsed, list) and all(isinstance(item, str) for item in parsed):
                     return [q.strip() for q in parsed if q.strip()]
             except (json.JSONDecodeError, ValueError):
                 pass
 
         # 尝试换行分隔（每行一个子问题）
-        lines = [
-            line.strip().strip('"').strip("'")
-            for line in content.split("\n")
-            if line.strip()
-        ]
+        lines = [line.strip().strip('"').strip("'") for line in content.split("\n") if line.strip()]
         lines = [
             re.sub(r"^\d+[.、)]\s*", "", line)  # 去掉序号
             for line in lines

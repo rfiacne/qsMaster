@@ -117,7 +117,7 @@ python -m pytest tests/integration/ -v
 python -m pytest tests/unit/ && python -m pytest tests/integration/
 ```
 
-**251 单元 + 32 集成 = 283 测试** (全部通过)
+**266 单元 + 33 集成 = 299 测试** (全部通过)
 
 ## 配置
 

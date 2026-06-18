@@ -137,6 +137,7 @@ class FaithfulnessEvaluator:
         threshold: float = 0.7,
         max_claims: int = 10,
         judge_model: str = "",
+        judge_api_base_url: str = "",
     ):
         """
         Args:
@@ -144,11 +145,13 @@ class FaithfulnessEvaluator:
             threshold: 通过阈值（支撑比例 ≥ 此值算 PASS，< 此值算 FAIL，中间算 PARTIAL）
             max_claims: 最大校验声明数（超出按段落分段，防止 token 超限）
             judge_model: 校验用模型名（空则复用 LLM 主模型）
+            judge_api_base_url: 校验用独立 API 地址（空则复用 LLM 主地址）
         """
         self.enabled = enabled
         self.threshold = max(0.0, min(1.0, threshold))
         self.max_claims = max_claims
         self.judge_model = judge_model
+        self.judge_api_base_url = judge_api_base_url
         self._llm_client = None
 
     def evaluate(
@@ -434,13 +437,12 @@ class FaithfulnessEvaluator:
         settings = get_settings()
 
         model = self.judge_model or settings.llm.model
-        api_key = settings.llm.resolved_api_key or "sk-placeholder"
+        api_key = settings.llm.resolved_api_key
         base_url = settings.llm.api_base_url
 
-        # judge_model 可搭配独立 API 地址（通过环境变量覆盖）
-        if self.judge_model:
-            judge_api_base = settings.llm.api_base_url
-            base_url = judge_api_base
+        # judge_model 可搭配独立评判 API 地址（judge_api_base_url 为空则复用主地址）
+        if self.judge_api_base_url:
+            base_url = self.judge_api_base_url
 
         if self._llm_client is None:
             from openai import OpenAI
