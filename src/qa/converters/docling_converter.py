@@ -57,15 +57,15 @@ def detect_file_type(file_path: str) -> str | None:
 
 
 class PaddleOCRBackend:
-    """PaddleOCR 轻量识别后端（扫描件 OCR）
+    """PaddleOCR 识别后端（扫描件 OCR）
 
-    使用 ppocr tiny 模型：ch_ppocr_mobile_v2.0 检测 + 识别。
+    使用 PP-OCRv6 medium 模型（PaddleOCR 3.x / paddleocr>=3.7.0）。
+    PP-OCRv6 统一支持 50 种语言，无需切换模型。
     仅在使用时延迟加载，不占用启动时间。
     """
 
-    def __init__(self, lang: str = "ch", use_tiny_model: bool = True):
+    def __init__(self, lang: str = "ch"):
         self.lang = lang
-        self.use_tiny_model = use_tiny_model
         self._ocr = None
 
     def _lazy_init(self):
@@ -74,13 +74,16 @@ class PaddleOCRBackend:
         try:
             from paddleocr import PaddleOCR
 
+            # PaddleOCR 3.x API（PP-OCRv6 默认）
+            # use_textline_orientation 替代废弃的 use_angle_cls
+            # 模型大小通过 ocr_version 控制，默认 medium
             self._ocr = PaddleOCR(
-                use_angle_cls=True,
+                use_textline_orientation=True,
                 lang=self.lang,
-                use_tiny_model=self.use_tiny_model,
-                show_log=False,
+                ocr_version="PP-OCRv6",
+                engine="paddle",
             )
-            logger.info("PaddleOCR tiny 模型加载完成")
+            logger.info("PaddleOCR PP-OCRv6 模型加载完成")
         except ImportError:
             raise ImportError(
                 "PaddleOCR 不可用，请安装: pip install paddlepaddle paddleocr"
@@ -97,18 +100,17 @@ class PaddleOCRBackend:
         if img is None:
             return ""
 
-        result = self._ocr.ocr(img, cls=True)
+        # PaddleOCR 3.x 使用 predict() 替代废弃的 ocr()
+        results = self._ocr.predict(img)
 
-        if not result or not result[0]:
-            return ""
-
-        # result[0] = [(bbox, (text, confidence)), ...]
         lines: list[str] = []
-        for line in result[0]:
-            text = line[1][0]
-            conf = line[1][1]
-            if conf > 0.5:  # 置信度阈值
-                lines.append(text.strip())
+        for res in results:
+            data = res.json["res"]
+            texts = data.get("rec_texts", [])
+            scores = data.get("rec_scores", [])
+            for text, conf in zip(texts, scores):
+                if conf > 0.5:  # 置信度阈值
+                    lines.append(text.strip())
 
         return "\n".join(lines)
 
@@ -349,7 +351,7 @@ class PDFConverter:
 
             tables = []
             for table in result.document.tables:
-                table_text = table.export_to_text()
+                table_text = table.export_to_markdown(doc=result.document)
                 if table_text.strip():
                     tables.append(table_text)
 

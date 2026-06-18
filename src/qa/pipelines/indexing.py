@@ -69,6 +69,7 @@ class IndexingPipeline:
         self.splitter = HierarchicalDocumentSplitter(
             section_size=blocks[0] if len(blocks) > 0 else 500,
             paragraph_size=blocks[1] if len(blocks) > 1 else 100,
+            split_max_iterations=100000,
         )
         self.writer = StoreWriter(store_manager)
         self.router = FileRouter(ocr_enabled=ocr_enabled, ocr_backend=ocr_backend)

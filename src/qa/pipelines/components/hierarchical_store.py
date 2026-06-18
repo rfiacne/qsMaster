@@ -34,16 +34,19 @@ class HierarchicalDocumentSplitter:
         section_size: int = 500,
         paragraph_size: int = 100,
         overlap: int = 20,
+        split_max_iterations: int = 100000,
     ):
         """
         Args:
             section_size: 大块目标字符数
             paragraph_size: 小块目标字符数
             overlap: 分块重叠字符数
+            split_max_iterations: 文本分割最大迭代次数
         """
         self.section_size = section_size
         self.paragraph_size = paragraph_size
         self.overlap = overlap
+        self.split_max_iterations = split_max_iterations
 
     @component.output_types(
         parents=list[Document],
@@ -131,7 +134,7 @@ class HierarchicalDocumentSplitter:
 
         chunks: list[str] = []
         start = 0
-        max_iterations = 10000  # 安全计数器，防止死循环
+        max_iterations = self.split_max_iterations
         iteration = 0
 
         while start < len(text) and iteration < max_iterations:

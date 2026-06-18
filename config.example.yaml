@@ -42,6 +42,7 @@ retrieval:
 indexing:
   batch_size: 100
   ocr_enabled: false
+  ocr_backend: auto          # auto | docling | opendataloader | paddle | none
   doc_timeout_seconds: 120           # 单文档转换超时（秒，OCR 文档可能需要更长时间）
 
 rerank:

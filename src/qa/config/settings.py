@@ -175,6 +175,10 @@ class IndexingConfig(BaseSettings):
 
     batch_size: int = Field(default=100, ge=1, le=1000, description="批量索引大小")
     ocr_enabled: bool = Field(default=False, description="是否启用 OCR（扫描件）")
+    ocr_backend: str = Field(
+        default="auto",
+        description="PDF 解析后端: auto | docling | opendataloader | paddle | none",
+    )
     doc_timeout_seconds: int = Field(
         default=120,
         ge=10,
@@ -482,6 +486,7 @@ class Settings(BaseSettings):
             "indexing": {
                 "batch_size": self.indexing.batch_size,
                 "ocr_enabled": self.indexing.ocr_enabled,
+                "ocr_backend": self.indexing.ocr_backend,
                 "doc_timeout_seconds": self.indexing.doc_timeout_seconds,
             },
             "server": {
