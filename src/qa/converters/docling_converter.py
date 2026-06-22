@@ -15,12 +15,22 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from pathlib import Path
 
 from haystack import Document
 
 logger = logging.getLogger(__name__)
+
+
+def compute_file_md5(file_path: str | Path) -> str:
+    """计算文件 MD5 哈希值（用于去重）"""
+    h = hashlib.md5()
+    with open(file_path, "rb") as f:
+        for chunk in iter(lambda: f.read(8192), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 # ─── 支持的文档类型 ─────────────────────────────────────────
@@ -165,6 +175,7 @@ class OpenDataLoaderPDFConverter:
         base_meta = {
             "file_path": str(path),
             "file_type": "pdf",
+            "file_md5": compute_file_md5(path),
             "parser": "opendataloader",
             **(meta or {}),
         }
@@ -306,6 +317,7 @@ class PDFConverter:
         base_meta = {
             "file_path": str(path),
             "file_type": "pdf",
+            "file_md5": compute_file_md5(path),
             **(meta or {}),
         }
 
@@ -316,19 +328,19 @@ class PDFConverter:
             return self._convert_with_odl(path, base_meta)
 
         # Auto 模式：多级 fallback
-        # 1) Docling 优先
-        if self._docling_available:
-            try:
-                return self._convert_with_docling(path, base_meta)
-            except Exception as e:
-                logger.warning(f"Docling 失败 ({path.name}): {e}，尝试 OpenDataLoader")
-
-        # 2) OpenDataLoader 次选（benchmark #1）
+        # 1) OpenDataLoader 优先（benchmark #1）
         if self._odl and self._odl._available:
             try:
                 return self._convert_with_odl(path, base_meta)
             except Exception as e:
-                logger.warning(f"OpenDataLoader 失败 ({path.name}): {e}")
+                logger.warning(f"OpenDataLoader 失败 ({path.name}): {e}，尝试 Docling")
+
+        # 2) Docling 次选
+        if self._docling_available:
+            try:
+                return self._convert_with_docling(path, base_meta)
+            except Exception as e:
+                logger.warning(f"Docling 失败 ({path.name}): {e}")
 
         # 3) 扫描件 → PaddleOCR
         if self._is_scanned(path):
@@ -438,8 +450,47 @@ class DOCXConverter:
     """Word 文档转换器（兼容 .docx 和 .doc）
 
     使用 python-docx 提取文本和表格，表格以 Markdown 格式输出。
-    python-docx 对 .doc（OLE2）有基础支持。
+    .doc（OLE2 二进制格式）通过 win32com 转为临时 .docx 后再解析。
     """
+
+    @staticmethod
+    def _doc_to_docx(path: Path) -> Path:
+        """用 Word COM 将 .doc 转为临时 .docx，返回临时文件路径。"""
+        import tempfile
+
+        try:
+            import win32com.client
+        except ImportError:
+            raise ValueError(
+                f"无法处理 .doc 文件: 需要 pywin32。"
+                f"请运行: pip install pywin32"
+            )
+
+        word = None
+        doc_obj = None
+        tmp_path = Path(tempfile.mktemp(suffix=".docx"))
+        try:
+            word = win32com.client.Dispatch("Word.Application")
+            word.Visible = False
+            word.DisplayAlerts = False
+            doc_obj = word.Documents.Open(str(path.resolve()))
+            # 16 = wdFormatDocumentDefault (.docx)
+            doc_obj.SaveAs(str(tmp_path), FileFormat=16)
+            return tmp_path
+        except Exception as e:
+            tmp_path.unlink(missing_ok=True)
+            raise ValueError(f".doc 转换失败 (需要安装 Microsoft Word): {e}") from e
+        finally:
+            if doc_obj is not None:
+                try:
+                    doc_obj.Close(False)
+                except Exception:
+                    pass
+            if word is not None:
+                try:
+                    word.Quit()
+                except Exception:
+                    pass
 
     def convert(self, file_path: str, meta: dict | None = None) -> list[Document]:
         path = Path(file_path)
@@ -452,6 +503,7 @@ class DOCXConverter:
         base_meta = {
             "file_path": str(path),
             "file_type": file_type,
+            "file_md5": compute_file_md5(path),
             **(meta or {}),
         }
 
@@ -460,7 +512,18 @@ class DOCXConverter:
         except ImportError:
             raise ImportError("请安装 python-docx: pip install python-docx")
 
-        doc = docx.Document(path)
+        # .doc (OLE2) → 先转为 .docx
+        tmp_docx = None
+        parse_path = path
+        if ext == ".doc":
+            tmp_docx = self._doc_to_docx(path)
+            parse_path = tmp_docx
+
+        try:
+            doc = docx.Document(str(parse_path))
+        finally:
+            if tmp_docx is not None:
+                tmp_docx.unlink(missing_ok=True)
 
         # 提取段落文本
         paragraphs = []
@@ -509,6 +572,7 @@ class XLSXConverter:
         base_meta = {
             "file_path": str(path),
             "file_type": file_type,
+            "file_md5": compute_file_md5(path),
             **(meta or {}),
         }
 
@@ -618,6 +682,7 @@ class MarkdownConverter:
         base_meta = {
             "file_path": str(path),
             "file_type": "md",
+            "file_md5": compute_file_md5(path),
             **(meta or {}),
         }
 
@@ -654,6 +719,7 @@ class HTMLConverter:
         base_meta = {
             "file_path": str(path),
             "file_type": "html",
+            "file_md5": compute_file_md5(path),
             **(meta or {}),
         }
 
@@ -703,6 +769,7 @@ class TXTConverter:
         base_meta = {
             "file_path": str(path),
             "file_type": "txt",
+            "file_md5": compute_file_md5(path),
             **(meta or {}),
         }
 
@@ -745,6 +812,7 @@ class ImageConverter:
         base_meta = {
             "file_path": str(path),
             "file_type": "image",
+            "file_md5": compute_file_md5(path),
             **(meta or {}),
         }
 
