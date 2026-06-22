@@ -112,7 +112,15 @@ class StoreManager:
         # 尝试从磁盘加载
         if chunk_path.exists() and (chunk_path / "index.tvim").exists():
             logger.info(f"从磁盘加载 chunk_store: {chunk_path}")
-            self.chunk_store = TurboQuantDocumentStore.load_from_disk(str(chunk_path))
+            try:
+                self.chunk_store = TurboQuantDocumentStore.load_from_disk(str(chunk_path))
+            except Exception as e:
+                logger.error(f"chunk_store 加载失败（将新建）: {e}")
+                self.chunk_store = TurboQuantDocumentStore(
+                    dim=self.dim,
+                    bit_width=self.bit_width,
+                    embedding_similarity_function=self.similarity_function,
+                )
         else:
             self.chunk_store = TurboQuantDocumentStore(
                 dim=self.dim,
@@ -122,7 +130,15 @@ class StoreManager:
 
         if parent_path.exists() and (parent_path / "index.tvim").exists():
             logger.info(f"从磁盘加载 parent_store: {parent_path}")
-            self.parent_store = TurboQuantDocumentStore.load_from_disk(str(parent_path))
+            try:
+                self.parent_store = TurboQuantDocumentStore.load_from_disk(str(parent_path))
+            except Exception as e:
+                logger.error(f"parent_store 加载失败（将新建）: {e}")
+                self.parent_store = TurboQuantDocumentStore(
+                    dim=self.dim,
+                    bit_width=self.bit_width,
+                    embedding_similarity_function=self.similarity_function,
+                )
         else:
             self.parent_store = TurboQuantDocumentStore(
                 dim=self.dim,

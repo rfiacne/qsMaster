@@ -9,12 +9,15 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any
 
 import yaml
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+logger = logging.getLogger(__name__)
 
 
 class ApiKeyMixin:
@@ -405,8 +408,12 @@ class Settings(BaseSettings):
         config_path = Path(config_file)
 
         if config_path.exists():
-            with open(config_path, encoding="utf-8") as f:
-                raw = yaml.safe_load(f) or {}
+            try:
+                with open(config_path, encoding="utf-8") as f:
+                    raw = yaml.safe_load(f) or {}
+            except (yaml.YAMLError, OSError) as e:
+                logger.error(f"配置文件加载失败: {config_file} — {e}")
+                raw = {}
 
             # 递归合并各 section
             for section_key in (

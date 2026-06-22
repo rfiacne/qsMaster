@@ -21,6 +21,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from qa.config.settings import get_settings
 from qa.pipelines.components.review_queue import ReviewWorkflow
 
 console = Console()
@@ -33,7 +34,10 @@ review_app = typer.Typer(
 
 def _get_workflow() -> ReviewWorkflow:
     """获取 ReviewWorkflow 实例"""
-    workflow = ReviewWorkflow(store_path="./data/review_queue")
+    settings = get_settings()
+    store_path = getattr(settings.early_exit, "store_path", "./data/standard_answers")
+    review_path = store_path + "_review"
+    workflow = ReviewWorkflow(store_path=review_path)
     workflow.ensure_loaded()
     return workflow
 

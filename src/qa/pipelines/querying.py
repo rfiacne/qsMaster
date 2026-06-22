@@ -32,6 +32,27 @@ from qa.stores.turbovec_store import StoreManager
 logger = logging.getLogger(__name__)
 
 
+# ── RAG Prompt ───────────────────────────────────────────
+
+SYSTEM_PROMPT = (
+    "你是一个证券清算与技术领域的专业问答助手。请基于以下检索到的文档片段回答用户的问题。\n\n"
+    "要求：\n"
+    "1. 只基于检索到的文档内容回答，不要编造信息\n"
+    "2. 若无任何片段支撑该问题，必须仅回复'根据现有知识库无法回答该问题'，不得拼凑\n"
+    "3. 在回答中标注引用来源，格式为 [来源:文件名]\n"
+    "4. 对于涉及金额、日期、规则编号的具体信息，确保准确无误"
+)
+
+SYSTEM_PROMPT_WITH_HISTORY = (
+    "你是一个证券清算与技术领域的专业问答助手。请基于以下检索到的文档片段回答用户的问题。\n\n"
+    "要求：\n"
+    "1. 只基于检索到的文档内容回答，不要编造信息\n"
+    "2. 若无任何片段支撑该问题，必须仅回复'根据现有知识库无法回答该问题'，不得拼凑\n"
+    "3. 在回答中标注引用来源，格式为 [来源:文件名]\n"
+    "4. 对于涉及金额、日期、规则编号的具体信息，确保准确无误\n"
+    "5. 回答时可以利用对话历史中的上下文，但不要重复对话历史中的内容"
+)
+
 DEFAULT_RAG_TEMPLATE = """你是一个专业的财务与证券清算助手，职责是基于提供的文档准确回答用户问题。
 
 回答要求：
@@ -700,19 +721,10 @@ class QueryPipeline:
             "\n---\n".join(context_parts) if context_parts else "（知识库中未找到相关文档）"
         )
 
-        system_prompt = (
-            "你是一个证券清算与技术领域的专业问答助手。请基于以下检索到的文档片段回答用户的问题。\n\n"
-            "要求：\n"
-            "1. 只基于检索到的文档内容回答，不要编造信息\n"
-            "2. 若无任何片段支撑该问题，必须仅回复'根据现有知识库无法回答该问题'，不得拼凑\n"
-            "3. 在回答中标注引用来源，格式为 [来源:文件名]\n"
-            "4. 对于涉及金额、日期、规则编号的具体信息，确保准确无误"
-        )
-
         stream = client.chat.completions.create(
             model=settings.llm.model,
             messages=[
-                {"role": "system", "content": system_prompt},
+                {"role": "system", "content": SYSTEM_PROMPT},
                 {
                     "role": "user",
                     "content": (f"检索到的文档片段：\n{context_text}\n\n用户问题: {question}"),
@@ -919,16 +931,10 @@ class QueryPipeline:
         if conversation_history:
             history_section = f"\n\n=== 对话历史 ===\n{conversation_history}"
 
-        system_prompt = (
-            "你是一个证券清算与技术领域的专业问答助手。请基于以下检索到的文档片段回答用户的问题。"
-            f"{history_section}\n\n"
-            "要求：\n"
-            "1. 只基于检索到的文档内容回答，不要编造信息\n"
-            "2. 若无任何片段支撑该问题，必须仅回复'根据现有知识库无法回答该问题'，不得拼凑\n"
-            "3. 在回答中标注引用来源，格式为 [来源:文件名]\n"
-            "4. 对于涉及金额、日期、规则编号的具体信息，确保准确无误\n"
-            "5. 回答时可以利用对话历史中的上下文，但不要重复对话历史中的内容"
-        )
+        system_prompt = SYSTEM_PROMPT_WITH_HISTORY.replace(
+            "\n\n用户问题:",
+            f"{history_section}\n\n用户问题:"
+        ) if conversation_history else SYSTEM_PROMPT
 
         resp = client.chat.completions.create(
             model=settings.llm.model,
