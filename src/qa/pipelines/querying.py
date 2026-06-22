@@ -718,8 +718,8 @@ class QueryPipeline:
                     "content": (f"检索到的文档片段：\n{context_text}\n\n用户问题: {question}"),
                 },
             ],
-            temperature=0.3,
-            max_tokens=2048,
+            temperature=settings.llm.temperature,
+            max_tokens=settings.llm.max_tokens,
             stream=True,
         )
 
@@ -939,8 +939,8 @@ class QueryPipeline:
                     "content": (f"检索到的文档片段：\n{context_text}\n\n用户问题: {question}"),
                 },
             ],
-            temperature=0.3,
-            max_tokens=2048,
+            temperature=settings.llm.temperature,
+            max_tokens=settings.llm.max_tokens,
         )
 
         return resp.choices[0].message.content or ""

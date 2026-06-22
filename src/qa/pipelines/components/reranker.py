@@ -34,11 +34,13 @@ class Reranker:
         api_base_url: str = "",
         api_key: str | None = None,
         top_k: int = 5,
+        timeout: int = 30,
     ):
         self.model = model
         self.api_base_url = api_base_url
         self.api_key = api_key
         self.top_k = top_k
+        self.timeout = timeout
 
     def rerank(
         self,
@@ -132,7 +134,10 @@ class Reranker:
         }
 
         try:
-            resp = requests.post(url, json=payload, headers=headers, timeout=30)
+            resp = requests.post(
+                url, json=payload, headers=headers,
+                timeout=self.timeout,
+            )
             resp.raise_for_status()
             data = resp.json()
 

@@ -57,22 +57,26 @@ class SearchRequest(BaseModel):
 
 # ─── 延迟初始化（首次请求时加载） ─────────────────────
 
+import threading
 
 _store = None
 _query_pipeline = None
 _index_pipeline = None
 _bm25_index = None
+_lock = threading.Lock()
 
 
 def get_store():
     global _store
     if _store is None:
-        settings = get_settings()
-        _store = create_store_manager(
-            bit_width=settings.vector_store.bit_width,
-            similarity_function=settings.vector_store.similarity_function,
-            persist_path=settings.vector_store.persist_path,
-        )
+        with _lock:
+            if _store is None:  # double-check
+                settings = get_settings()
+                _store = create_store_manager(
+                    bit_width=settings.vector_store.bit_width,
+                    similarity_function=settings.vector_store.similarity_function,
+                    persist_path=settings.vector_store.persist_path,
+                )
     return _store
 
 
@@ -96,31 +100,36 @@ def reset_runtime_singletons():
     索引版本变更后，旧 BM25 索引与查询缓存均失效。
     """
     global _query_pipeline, _bm25_index
-    _query_pipeline = None
-    _bm25_index = None
+    with _lock:
+        _query_pipeline = None
+        _bm25_index = None
     # 查询缓存按 store_version 自动失效，无需手动清理
 
 
 def get_query_pipeline():
     global _query_pipeline
     if _query_pipeline is None:
-        from qa.pipelines.factory import build_query_pipeline
+        with _lock:
+            if _query_pipeline is None:
+                from qa.pipelines.factory import build_query_pipeline
 
-        _query_pipeline = build_query_pipeline(get_settings(), get_store())
+                _query_pipeline = build_query_pipeline(get_settings(), get_store())
     return _query_pipeline
 
 
 def get_index_pipeline():
     global _index_pipeline
     if _index_pipeline is None:
-        settings = get_settings()
-        _index_pipeline = IndexingPipeline(
-            store_manager=get_store(),
-            block_sizes=settings.retrieval.block_sizes,
-            ocr_enabled=settings.indexing.ocr_enabled,
-            ocr_backend=settings.indexing.ocr_backend,
-            doc_timeout_sec=settings.indexing.doc_timeout_seconds,
-        )
+        with _lock:
+            if _index_pipeline is None:
+                settings = get_settings()
+                _index_pipeline = IndexingPipeline(
+                    store_manager=get_store(),
+                    block_sizes=settings.retrieval.block_sizes,
+                    ocr_enabled=settings.indexing.ocr_enabled,
+                    ocr_backend=settings.indexing.ocr_backend,
+                    doc_timeout_sec=settings.indexing.doc_timeout_seconds,
+                )
     return _index_pipeline
 
 

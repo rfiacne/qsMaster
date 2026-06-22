@@ -60,6 +60,12 @@ class LLMConfig(ApiKeyMixin, BaseSettings):
         description="存储 API 密钥的环境变量名（如 INTERNAL_API_KEY）",
     )
     timeout_seconds: int = Field(default=30, ge=1, le=300, description="API 超时阈值（秒）")
+    temperature: float = Field(
+        default=0.3, ge=0.0, le=2.0, description="LLM 生成温度"
+    )
+    max_tokens: int = Field(
+        default=2048, ge=128, le=32768, description="LLM 最大生成 token 数"
+    )
 
 
 class EmbeddingConfig(ApiKeyMixin, BaseSettings):
@@ -206,6 +212,9 @@ class RerankConfig(ApiKeyMixin, BaseSettings):
         ge=1,
         le=50,
         description="Reranker 重排后返回的结果数",
+    )
+    timeout_seconds: int = Field(
+        default=30, ge=5, le=300, description="Reranker API 超时（秒）"
     )
 
 

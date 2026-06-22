@@ -35,7 +35,7 @@ def create_remote_client():
     return OpenAI(
         api_key=settings.embedding.resolved_api_key or settings.llm.resolved_api_key or "",
         base_url=settings.embedding.api_base_url,
-        timeout=10,  # 短超时用于快速检测
+        timeout=settings.embedding.timeout_seconds,
     )
 
 

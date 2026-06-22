@@ -132,6 +132,7 @@ def _build_reranker(settings: Settings) -> Any | None:
         api_base_url=settings.rerank.api_base_url,
         api_key=settings.rerank.resolved_api_key,
         top_k=settings.rerank.top_k,
+        timeout=settings.rerank.timeout_seconds,
     )
 
 
