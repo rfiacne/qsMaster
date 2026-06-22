@@ -261,10 +261,14 @@ class PDFConverter:
         self.ocr_enabled = ocr_enabled
         self.ocr_backend = ocr_backend if ocr_enabled else "none"
         self._docling_available = False
+        self._docling_converter = None
         self._paddle: PaddleOCRBackend | None = None
         self._odl: OpenDataLoaderPDFConverter | None = None
-        self._init_docling()
-        self._init_opendataloader()
+        # 只在需要时才初始化 Docling/ODL（避免触发 rapidocr 等重量依赖导入）
+        if self.ocr_backend in ("auto", "docling"):
+            self._init_docling()
+        if self.ocr_backend in ("auto", "opendataloader"):
+            self._init_opendataloader()
 
     def _init_opendataloader(self) -> None:
         """延迟初始化 OpenDataLoader（仅当后端选择它时）"""
