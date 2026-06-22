@@ -289,6 +289,7 @@ class QueryPipeline:
                     if rewrite_result.sub_questions and len(rewrite_result.sub_questions) > 1:
                         # 多意图：分别嵌入检索后合并
                         logger.info(f"多意图分解: {len(rewrite_result.sub_questions)} 子问题")
+                        retrieval_t0 = time.time()
                         all_chunks: list[Document] = []
                         for sq in rewrite_result.sub_questions:
                             try:
@@ -312,7 +313,6 @@ class QueryPipeline:
 
                         logger.info(f"多意图合并后: {len(all_chunks)} → {len(chunk_results)} 去重")
                         # 直接跳转到 Reranker（跳过下方单次嵌入+检索）
-                        retrieval_t0 = time.time()
                         skip_embed_and_retrieve = True
                     else:
                         # 单一意图：用改写后问题
@@ -361,9 +361,6 @@ class QueryPipeline:
                     span.set_status(f"error: {e}")
                     logger.error(f"检索失败: {e}")
                     return result
-
-        if not chunk_results:
-            pass
 
         # 2.5) Reranker 精排（可选）
         if self.reranker is not None and chunk_results:
@@ -876,13 +873,6 @@ class QueryPipeline:
         from qa.utils import short_name
 
         return short_name(path)
-        # 如果文件名太长（含 UUID 前缀），截断
-        if len(name) > 50:
-            # 尝试保留后半段（通常是"机构_类别.pdf"）
-            parts = name.split("_", 2)
-            if len(parts) >= 3:
-                name = "_".join(parts[-2:])
-        return name
 
     def _generate(
         self, question: str, context_docs: list[Document], conversation_history: str = ""

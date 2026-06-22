@@ -693,7 +693,7 @@ class EarlyExitMatcher:
         """
         self._build_index()
 
-        if not self._question_index:
+        if not self._index_built:
             return None
 
         # 嵌入用户问题

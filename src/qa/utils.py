@@ -18,7 +18,13 @@ def short_name(path: str) -> str:
     """从完整路径中提取文件名"""
     if not path or path == "unknown":
         return "unknown"
-    return path.replace("\\", "/").split("/")[-1]
+    name = path.replace("\\", "/").split("/")[-1]
+    # 如果文件名太长（含 UUID 前缀），截断保留后半段
+    if len(name) > 50:
+        parts = name.split("_", 2)
+        if len(parts) >= 3:
+            name = "_".join(parts[-2:])
+    return name
 
 
 def cosine_similarity(a: list[float], b: list[float]) -> float:

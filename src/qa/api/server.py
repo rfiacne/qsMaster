@@ -88,9 +88,11 @@ def get_bm25_index():
     """
     global _bm25_index
     if _bm25_index is None:
-        from qa.pipelines.factory import build_bm25_index
+        with _lock:
+            if _bm25_index is None:  # double-check
+                from qa.pipelines.factory import build_bm25_index
 
-        _bm25_index = build_bm25_index(get_settings(), get_store())
+                _bm25_index = build_bm25_index(get_settings(), get_store())
     return _bm25_index
 
 
@@ -225,17 +227,16 @@ async def ask_stream(req: AskRequest):
     """流式问答 — SSE 响应"""
     from fastapi.responses import StreamingResponse
 
-    pipeline = get_query_pipeline()
-
     async def event_generator():
+        import json
+
         try:
+            pipeline = get_query_pipeline()
             for event in pipeline.run_stream(
                 question=req.question,
                 top_k=req.top_k,
                 filters=req.filters,
             ):
-                import json
-
                 event_type = event.get("type", "data")
                 data = json.dumps(event, ensure_ascii=False)
                 yield f"event: {event_type}\ndata: {data}\n\n"
@@ -244,7 +245,7 @@ async def ask_stream(req: AskRequest):
                     break
         except Exception as e:
             logger.error(f"流式问答异常: {e}", exc_info=True)
-            yield f"event: error\ndata: {{\"error\": \"{str(e)}\"}}\n\n"
+            yield f"event: error\ndata: {json.dumps({'error': str(e)})}\n\n"
 
     return StreamingResponse(
         event_generator(),
@@ -294,12 +295,16 @@ async def delete_session(session_id: str):
 @app.post("/api/v1/qa/search")
 async def search(req: SearchRequest):
     """知识库检索（仅检索，不生成回答）"""
-    pipeline = get_query_pipeline()
-    result = pipeline.run(
-        question=req.query,
-        top_k=req.top_k,
-        no_llm=True,
-    )
+    try:
+        pipeline = get_query_pipeline()
+        result = pipeline.run(
+            question=req.query,
+            top_k=req.top_k,
+            no_llm=True,
+        )
+    except Exception as e:
+        logger.error(f"搜索请求失败: {e}", exc_info=True)
+        return {"error": str(e), "code": "INTERNAL"}
     # 从配置读取最低分数阈值
     srv_settings = get_settings()
     min_score = srv_settings.retrieval.min_score
@@ -403,7 +408,7 @@ async def upload(
 
     try:
         for f in files:
-            dest = tmp_dir / f.filename
+            dest = tmp_dir / Path(f.filename).name
             content = await f.read()
             dest.write_bytes(content)
             file_paths.append(str(dest))
