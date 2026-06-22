@@ -136,6 +136,7 @@ class FaithfulnessEvaluator:
         enabled: bool = True,
         threshold: float = 0.7,
         max_claims: int = 10,
+        max_context_chars: int = 800,
         judge_model: str = "",
         judge_api_base_url: str = "",
     ):
@@ -144,12 +145,14 @@ class FaithfulnessEvaluator:
             enabled: 是否启用校验
             threshold: 通过阈值（支撑比例 ≥ 此值算 PASS，< 此值算 FAIL，中间算 PARTIAL）
             max_claims: 最大校验声明数（超出按段落分段，防止 token 超限）
+            max_context_chars: 单个文档片段截断字符数（防止 token 超限）
             judge_model: 校验用模型名（空则复用 LLM 主模型）
             judge_api_base_url: 校验用独立 API 地址（空则复用 LLM 主地址）
         """
         self.enabled = enabled
         self.threshold = max(0.0, min(1.0, threshold))
         self.max_claims = max_claims
+        self.max_context_chars = max_context_chars
         self.judge_model = judge_model
         self.judge_api_base_url = judge_api_base_url
         self._llm_client = None
@@ -300,7 +303,7 @@ class FaithfulnessEvaluator:
         for i, doc in enumerate(context_docs, 1):
             meta = doc.meta or {}
             source = meta.get("file_path", meta.get("source", f"doc_{i}"))
-            content = (doc.content or "")[:800]  # 截断保护 token
+            content = (doc.content or "")[:self.max_context_chars]  # 截断保护 token
             parts.append(f"[文档{i}] {source}:\n{content}")
 
         return "\n\n---\n\n".join(parts)

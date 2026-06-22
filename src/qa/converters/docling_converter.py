@@ -64,8 +64,9 @@ class PaddleOCRBackend:
     仅在使用时延迟加载，不占用启动时间。
     """
 
-    def __init__(self, lang: str = "ch"):
+    def __init__(self, lang: str = "ch", dpi: int = 300):
         self.lang = lang
+        self.dpi = dpi
         self._ocr = None
 
     def _lazy_init(self):
@@ -381,7 +382,7 @@ class PDFConverter:
 
         for page_num in range(len(doc)):
             page = doc[page_num]
-            pix = page.get_pixmap(dpi=300)
+            pix = page.get_pixmap(dpi=self.dpi)
             img_bytes = pix.tobytes("png")
             text = paddle.recognize_page(img_bytes)
             if text.strip():

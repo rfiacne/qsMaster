@@ -141,12 +141,16 @@ class SessionStore:
     使用 JSON 文件存储，支持 CRUD、最近列表、自动清理。
     """
 
-    def __init__(self, store_path: str = "./data/sessions"):
+    def __init__(self, store_path: str = "./data/sessions",
+                 debounce_seconds: float = 5.0):
         self.store_path = Path(store_path)
         self.sessions_file = self.store_path / "sessions.json"
         self._sessions: dict[str, Session] = {}
         self._lock = threading.Lock()
         self._loaded = False
+        self._dirty = False
+        self._last_write = 0.0
+        self._debounce_seconds = debounce_seconds
 
     def load(self) -> None:
         if self._loaded:
@@ -169,11 +173,24 @@ class SessionStore:
             self._loaded = True
 
     def save(self, session: Session) -> None:
-        """保存单个会话"""
+        """保存单个会话（按 debounce 批量写盘，非每次 flush）"""
         self.store_path.mkdir(parents=True, exist_ok=True)
         with self._lock:
             self._sessions[session.id] = session
-            self._write_all()
+            self._dirty = True
+            now = time.time()
+            if now - self._last_write >= self._debounce_seconds:
+                self._write_all()
+                self._dirty = False
+                self._last_write = now
+
+    def flush(self) -> None:
+        """强制持久化全部会话（exit 时调用）"""
+        with self._lock:
+            if self._dirty:
+                self._write_all()
+                self._dirty = False
+                self._last_write = time.time()
 
     def save_all(self) -> None:
         """持久化全部会话"""
@@ -221,7 +238,8 @@ class SessionStore:
             if session_id not in self._sessions:
                 return False
             del self._sessions[session_id]
-            self._write_all()
+            self._dirty = True
+            self._write_all()  # 删除操作立即持久化
         return True
 
     def clear_old(self, max_days: int = 30) -> int:

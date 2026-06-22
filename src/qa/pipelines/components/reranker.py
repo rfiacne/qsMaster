@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import logging
 import time
+from typing import Any
 
+import requests
 from haystack import Document
 
 from qa.config.settings import get_settings
@@ -35,12 +37,28 @@ class Reranker:
         api_key: str | None = None,
         top_k: int = 5,
         timeout: int = 30,
+        max_retries: int = 2,
     ):
         self.model = model
         self.api_base_url = api_base_url
         self.api_key = api_key
         self.top_k = top_k
         self.timeout = timeout
+        self.max_retries = max_retries
+        self._session: requests.Session | None = None
+
+    @property
+    def session(self) -> requests.Session:
+        if self._session is None:
+            self._session = requests.Session()
+            adapter = requests.adapters.HTTPAdapter(
+                pool_connections=5,
+                pool_maxsize=10,
+                max_retries=self.max_retries,
+            )
+            self._session.mount("https://", adapter)
+            self._session.mount("http://", adapter)
+        return self._session
 
     def rerank(
         self,
@@ -134,7 +152,7 @@ class Reranker:
         }
 
         try:
-            resp = requests.post(
+            resp = self.session.post(
                 url, json=payload, headers=headers,
                 timeout=self.timeout,
             )

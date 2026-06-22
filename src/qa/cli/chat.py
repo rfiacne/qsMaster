@@ -260,6 +260,7 @@ def chat(
         except (KeyboardInterrupt, EOFError):
             console.print("\n[yellow]再见！[/yellow]")
             session_store.save(session.session)
+            session_store.flush()
             break
 
         if not user_input:
@@ -271,6 +272,7 @@ def chat(
 
             if cmd == "/quit" or cmd == "/exit":
                 session_store.save(session.session)
+                session_store.flush()
                 console.print("[yellow]再见！[/yellow]")
                 break
 
