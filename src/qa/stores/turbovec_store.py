@@ -240,6 +240,14 @@ class StoreManager:
 
         return results
 
+    def has_file_md5(self, file_md5: str) -> bool:
+        """检查是否已存在指定 MD5 的文件"""
+        if not self._initialized:
+            self.initialize()
+        filters = {"field": "meta.file_md5", "operator": "==", "value": file_md5}
+        # 只需检查 parent_store（原始文档级别）
+        return len(self.parent_store.filter_documents(filters=filters)) > 0
+
     # ─── 删除 ───────────────────────────────────────────────
 
     def delete_documents(self, ids: list[str]) -> int:
@@ -306,11 +314,14 @@ class StoreManager:
         chunk_count = self.chunk_store.count_documents()
         parent_count = self.parent_store.count_documents()
 
+        # 按 file_md5 去重统计真实文件数
+        file_count = self._count_unique_files()
+
         # 估算索引大小
         index_size = self._estimate_size()
 
         return IndexStatus(
-            document_count=parent_count,  # 原始文档数 ≈ parent_count
+            document_count=file_count,  # 原始文件数（按 MD5 去重）
             chunk_count=chunk_count,
             parent_count=parent_count,
             index_size_bytes=index_size,
@@ -333,6 +344,18 @@ class StoreManager:
                     except OSError:
                         pass
         return total
+
+    def _count_unique_files(self) -> int:
+        """按 file_md5 去重统计真实文件数"""
+        if not self._initialized:
+            self.initialize()
+        # 获取所有 parent 文档，提取 file_md5 去重
+        docs = self.parent_store.filter_documents()
+        md5_set = set()
+        for doc in docs:
+            if doc.meta and "file_md5" in doc.meta:
+                md5_set.add(doc.meta["file_md5"])
+        return len(md5_set) if md5_set else len(docs)  # fallback: 无 MD5 时按文档数
 
     def count_documents(self) -> int:
         """文档总数"""

@@ -128,6 +128,7 @@ class AskRequest(BaseModel):
     top_k: int = 5
     filters: dict[str, Any] | None = None
     no_llm: bool = False
+    session_id: str = ""  # 会话 ID（空则自动创建新会话）
 
 
 class SearchRequest(BaseModel):
@@ -256,9 +257,29 @@ async def ask(req: AskRequest, _auth=Depends(check_rate_limit)):
 async def ask_stream(req: AskRequest, _auth=Depends(check_rate_limit)):
     """流式问答 — SSE 响应"""
     from fastapi.responses import StreamingResponse
+    from qa.pipelines.components.session_store import SessionStore
+
+    # 获取或创建会话
+    session_store = SessionStore()
+    session_store.load()
+    session_id = req.session_id
+    if session_id:
+        session = session_store.get(session_id)
+        if not session:
+            session = session_store.create(title=req.question[:50])
+            session_id = session.id
+    else:
+        session = session_store.create(title=req.question[:50])
+        session_id = session.id
 
     async def event_generator():
         import json
+
+        full_answer = ""
+        sources = []
+
+        # 发送会话 ID 作为第一个事件
+        yield f"event: message\ndata: {json.dumps({'type': 'meta', 'session_id': session_id})}\n\n"
 
         try:
             pipeline = get_query_pipeline()
@@ -270,6 +291,17 @@ async def ask_stream(req: AskRequest, _auth=Depends(check_rate_limit)):
                 event_type = event.get("type", "data")
                 data = json.dumps(event, ensure_ascii=False)
                 yield f"event: {event_type}\ndata: {data}\n\n"
+
+                # 收集回答内容用于保存会话
+                if event_type == "message" and event.get("type") == "token":
+                    full_answer += event.get("content", "")
+                elif event_type == "sources":
+                    sources = event.get("sources", [])
+                elif event_type == "done":
+                    # 保存对话到会话
+                    if full_answer:
+                        session.add_turn(req.question, full_answer, sources)
+                        session_store.save(session)
 
                 if event_type == "error" or event_type == "done":
                     break
@@ -320,6 +352,66 @@ async def delete_session(session_id: str, _auth=Depends(check_rate_limit)):
     if store.delete(session_id):
         return {"deleted": True}
     raise HTTPException(status_code=404, detail="会话不存在")
+
+
+@app.post("/api/v1/qa/sessions")
+async def create_session(req: dict = None, _auth=Depends(check_rate_limit)):
+    """创建新会话"""
+    from qa.pipelines.components.session_store import SessionStore
+
+    store = SessionStore()
+    store.load()
+    title = (req or {}).get("title", "")
+    session = store.create(title=title)
+    return {
+        "id": session.id,
+        "title": session.title or "(新会话)",
+        "created_at": session.created_at,
+    }
+
+
+@app.get("/api/v1/qa/sessions/{session_id}")
+async def get_session(session_id: str, _auth=Depends(check_rate_limit)):
+    """获取会话详情（含对话历史）"""
+    from qa.pipelines.components.session_store import SessionStore
+
+    store = SessionStore()
+    store.load()
+    session = store.get(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="会话不存在")
+    return {
+        "id": session.id,
+        "title": session.title or "(新会话)",
+        "turns": [
+            {
+                "question": t.question,
+                "answer": t.answer,
+                "sources": t.sources,
+                "timestamp": t.timestamp,
+            }
+            for t in session.turns
+        ],
+        "created_at": session.created_at,
+        "updated_at": session.updated_at,
+    }
+
+
+@app.post("/api/v1/qa/sessions/{session_id}/clear")
+async def clear_session(session_id: str, _auth=Depends(check_rate_limit)):
+    """清空会话对话历史（保留会话本身）"""
+    from qa.pipelines.components.session_store import SessionStore
+
+    store = SessionStore()
+    store.load()
+    session = store.get(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="会话不存在")
+    session.turns.clear()
+    session.title = ""
+    store.save(session)
+    store.flush()
+    return {"cleared": True, "id": session_id}
 
 
 @app.post("/api/v1/qa/search")
@@ -430,24 +522,53 @@ async def upload(
         raise HTTPException(status_code=400, detail=f"缺少必需元数据: {', '.join(missing)}")
 
     # 保存上传文件到临时目录
+    import hashlib
     import tempfile
 
     tmp_dir = Path(tempfile.mkdtemp(prefix="qa_upload_"))
     file_paths = []
+    skipped_files: list[dict] = []  # 记录跳过的重复文件
 
     import asyncio
 
     try:
+        store = get_store()
         for f in files:
             dest = tmp_dir / Path(f.filename).name
             content = await f.read()
             dest.write_bytes(content)
+
+            # 计算 MD5 并检查是否已存在
+            file_md5 = hashlib.md5(content).hexdigest()
+            if await asyncio.to_thread(store.has_file_md5, file_md5):
+                skipped_files.append({"filename": f.filename, "md5": file_md5})
+                logger.info(f"跳过重复文件: {f.filename} (MD5: {file_md5})")
+                continue
+
             file_paths.append(str(dest))
+
+        if not file_paths:
+            return {
+                "files_count": 0,
+                "documents_written": 0,
+                "documents_skipped": len(skipped_files),
+                "segments": 0,
+                "parents": 0,
+                "errors": [],
+                "time_ms": 0,
+                "skipped_files": skipped_files,
+            }
 
         pipeline = get_index_pipeline()
         # 在线程池中运行同步阻塞的 pipeline，避免卡死 event loop
         srv_settings = get_settings()
-        pipe_timeout = max(60, srv_settings.embedding.timeout_seconds + 30)
+        # ponytail: 文件数 × 单文档超时 + 嵌入 + 180s 缓冲（PaddleOCR 模型加载/分块/写入）
+        pipe_timeout = max(
+            180,
+            len(file_paths) * srv_settings.indexing.doc_timeout_seconds
+            + srv_settings.embedding.timeout_seconds
+            + 180,
+        )
         timed_out = False
         try:
             result = await asyncio.wait_for(
@@ -459,7 +580,6 @@ async def upload(
             raise RuntimeError(f"索引超时 ({pipe_timeout}s)。后台线程仍在运行，临时文件将在完成后自动清理。")
 
         # 显式持久化（StoreWriter 不再自动 save）
-        store = get_store()
         await asyncio.to_thread(store.save)
 
         # 索引已变更：清空 pipeline/BM25 单例，查询缓存按版本自动失效
@@ -468,11 +588,12 @@ async def upload(
         return {
             "files_count": result.files_count,
             "documents_written": result.documents_written,
-            "documents_skipped": result.documents_skipped,
+            "documents_skipped": result.documents_skipped + len(skipped_files),
             "segments": result.chunk_count,  # 检索用片段数
             "parents": result.parent_count,  # 上下文用大块数
             "errors": result.errors,
             "time_ms": result.total_time_ms,
+            "skipped_files": skipped_files,  # 重复跳过的文件列表
         }
     finally:
         # 清理临时文件 — 超时时不删，后台线程仍在使用
