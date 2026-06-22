@@ -204,6 +204,82 @@ body {
 }
 
 /* ═══════════════════════════════════════════════════
+   Chat Toolbar & Sessions Panel
+   ═══════════════════════════════════════════════════ */
+.chat-toolbar {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-primary);
+}
+.chat-toolbar-btn {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 6px 12px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.chat-toolbar-btn:hover {
+  background: var(--primary-bg);
+  color: var(--primary);
+  border-color: var(--primary-light);
+}
+.chat-toolbar-spacer { flex: 1; }
+.chat-sessions-panel {
+  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+  max-height: 300px;
+  overflow-y: auto;
+}
+.chat-sessions-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 16px;
+  font-size: 14px;
+  font-weight: 600;
+  border-bottom: 1px solid var(--border-color);
+}
+.chat-sessions-close {
+  background: none; border: none;
+  font-size: 16px; cursor: pointer;
+  color: var(--text-tertiary);
+}
+.chat-sessions-close:hover { color: var(--text-primary); }
+.chat-sessions-list { padding: 8px; }
+.chat-session-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.chat-session-item:hover { background: var(--bg-primary); }
+.chat-session-item.active { background: var(--primary-bg); border: 1px solid var(--primary-light); }
+.chat-session-item .session-title {
+  flex: 1;
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.chat-session-item .session-time {
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+.chat-session-item .session-delete {
+  background: none; border: none;
+  font-size: 12px; cursor: pointer;
+  color: var(--text-tertiary);
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.chat-session-item:hover .session-delete { opacity: 1; }
+.chat-session-item .session-delete:hover { color: var(--error, #d32f2f); }
+
+/* ═══════════════════════════════════════════════════
    Chat Area
    ═══════════════════════════════════════════════════ */
 .chat-area { flex: 1; overflow-y: auto; padding: 24px; scroll-behavior: smooth; background: var(--bg-page); }
@@ -327,6 +403,18 @@ body {
 }
 .message-body strong { font-weight: 700; color: var(--text-primary); }
 .message-body hr { border: none; border-top: 1px solid var(--border-light); margin: 12px 0; }
+
+/* ── Message actions ── */
+.message-actions { display: flex; gap: 8px; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border-light); }
+.message-actions .action-btn {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 12px; color: var(--text-secondary); cursor: pointer;
+  padding: 4px 10px; border-radius: var(--radius-sm);
+  border: 1px solid var(--border-light); background: var(--bg-primary);
+  transition: all .15s;
+}
+.message-actions .action-btn:hover { background: var(--primary-bg); color: var(--primary); border-color: var(--primary-light); }
+.message-actions .action-btn.added { background: var(--success-bg, #e8f5e9); color: var(--success, #2e7d32); border-color: var(--success, #2e7d32); }
 
 .typing-cursor {
   display: inline-block; width: 2px; height: 1em;
@@ -957,6 +1045,29 @@ body {
 
     <!-- ══════ Chat Page ══════ -->
     <div class="page-content active" id="pageChat">
+      <!-- 会话工具栏 -->
+      <div class="chat-toolbar">
+        <button class="chat-toolbar-btn" onclick="newChat()" title="新建对话">
+          <span>➕</span> 新对话
+        </button>
+        <button class="chat-toolbar-btn" onclick="clearChat()" title="清空当前对话">
+          <span>🗑️</span> 清空
+        </button>
+        <div class="chat-toolbar-spacer"></div>
+        <button class="chat-toolbar-btn" onclick="loadSessions()" title="会话列表">
+          <span>📋</span> 历史会话
+        </button>
+      </div>
+      <!-- 会话列表（可折叠） -->
+      <div class="chat-sessions-panel" id="chatSessionsPanel" style="display:none;">
+        <div class="chat-sessions-header">
+          <span>历史会话</span>
+          <button class="chat-sessions-close" onclick="toggleSessionsPanel()">✕</button>
+        </div>
+        <div class="chat-sessions-list" id="chatSessionsList">
+          <p style="padding:16px;color:var(--text-tertiary);font-size:13px;">加载中...</p>
+        </div>
+      </div>
       <div class="chat-area" id="chatArea">
         <div class="chat-inner">
           <div class="empty-state" id="emptyState">
@@ -1184,6 +1295,8 @@ const state = {
   streamingAbort: null,
   history: JSON.parse(localStorage.getItem('qa_history') || '[]'),
   pendingFiles: [],    // { file, name, size }
+  sessionId: '',       // 当前会话 ID
+  sessions: [],        // 会话列表
 };
 
 const $ = id => document.getElementById(id);
@@ -1222,12 +1335,12 @@ async function apiAsk(question) {
 
 // ── 流式问答 SSE ──
 function apiAskStream(question, callbacks) {
-  const { onToken, onSources, onFaithfulness, onDone, onError } = callbacks;
+  const { onToken, onSources, onFaithfulness, onDone, onError, onMeta } = callbacks;
   const url = `${API_BASE}/qa/ask/stream`;
   fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Accept': 'text/event-stream' },
-    body: JSON.stringify({ question, top_k: 5 }),
+    body: JSON.stringify({ question, top_k: 5, session_id: state.sessionId || '' }),
   }).then(async (response) => {
     if (!response.ok) {
       const err = await response.json().catch(() => ({ message: response.statusText }));
@@ -1263,7 +1376,12 @@ function apiAskStream(question, callbacks) {
           else if (type === 'degraded_warning') onFaithfulness && onFaithfulness({ result: 'fail', warning: data.message });
           else if (type === 'done') onDone && onDone(data);
           else if (type === 'error') onError && onError(data.message || '未知错误');
-          else if (type === 'meta') { /* meta data ignored */ }
+          else if (type === 'meta') {
+            if (data.session_id) {
+              state.sessionId = data.session_id;
+              onMeta && onMeta(data);
+            }
+          }
         } catch(e) { /* skip malformed JSON */ }
       }
     }
@@ -1413,13 +1531,81 @@ function renderMessage(msg) {
     bodyHTML = processCitations(bodyHTML, msg.sources);
     if (msg.faithfulness) bodyHTML += renderFaithfulnessBadge(msg.faithfulness);
   }
+  const actionsHTML = msg.role === 'assistant' && msg.content ? renderMessageActions(msg) : '';
   div.innerHTML = `<div class="message-header"><span class="message-avatar ${msg.role}">${avatar}</span><span class="message-author">${author}</span><span class="message-time">${msg.timestamp}</span></div>
-    <div class="message-body">${bodyHTML}</div>${renderSourcesSection(msg.sources)}`;
+    <div class="message-body">${bodyHTML}</div>${renderSourcesSection(msg.sources)}${actionsHTML}`;
   messagesContainer.appendChild(div);
 }
 
 function hideEmptyState() { emptyState.style.display = 'none'; }
 function showEmptyState() { if (state.messages.length === 0) emptyState.style.display = 'flex'; }
+
+function renderMessageActions(msg) {
+  return `<div class="message-actions" data-msg-id="${msg.id}">
+    <button class="action-btn add-to-standard" onclick="addToStandardAnswer('${msg.id}')" title="将此问答加入标准答案库">
+      <span>📋</span> 加入标准答案
+    </button>
+  </div>`;
+}
+
+async function addToStandardAnswer(msgId) {
+  // 查找对应的消息
+  const msgEl = document.getElementById('msg-' + msgId);
+  if (!msgEl) return;
+
+  // 从 state.messages 获取完整内容
+  const msg = state.messages.find(m => m.id === msgId);
+  if (!msg || !msg.content) return;
+
+  // 查找对应的问题（前一条 user 消息）
+  const msgIndex = state.messages.findIndex(m => m.id === msgId);
+  let question = '';
+  for (let i = msgIndex - 1; i >= 0; i--) {
+    if (state.messages[i].role === 'user') {
+      question = state.messages[i].content;
+      break;
+    }
+  }
+
+  if (!question) {
+    alert('无法找到对应的问题');
+    return;
+  }
+
+  const btn = msgEl.querySelector('.add-to-standard');
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '<span>⏳</span> 添加中...';
+  }
+
+  try {
+    const resp = await fetch(API_BASE + '/qa/answers', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        question: question,
+        answer: msg.content,
+        source: 'chat',
+        match_strategy: 'both',
+      }),
+    });
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      throw new Error(err.detail || `HTTP ${resp.status}`);
+    }
+    const data = await resp.json();
+    if (btn) {
+      btn.classList.add('added');
+      btn.innerHTML = `<span>✅</span> 已加入 (${data.created ? '新增' : '覆盖'})`;
+    }
+  } catch (err) {
+    alert('添加标准答案失败: ' + err.message);
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = '<span>📋</span> 加入标准答案';
+    }
+  }
+}
 
 function toggleSources(btn) {
   const list = btn.nextElementSibling;
@@ -1487,6 +1673,11 @@ function finalizeMessage(msgId, content, sources, faithfulness) {
   if (sources && sources.length > 0) {
     el.insertAdjacentHTML('beforeend', renderSourcesSection(sources));
   }
+  // 添加操作按钮（如果还没有）
+  const existingActions = el.querySelector('.message-actions');
+  if (!existingActions && content) {
+    el.insertAdjacentHTML('beforeend', renderMessageActions({ id: msgId, content }));
+  }
   scrollToBottom();
 }
 
@@ -1547,6 +1738,108 @@ function saveToHistory(question, answer, sources) {
   if (state.history.length > 50) state.history.pop();
   localStorage.setItem('qa_history', JSON.stringify(state.history));
   renderHistory();
+}
+
+/* ── Session Management ── */
+function newChat() {
+  state.sessionId = '';
+  state.messages = [];
+  messagesContainer.innerHTML = '';
+  showEmptyState();
+  // 关闭会话列表面板
+  const panel = $('chatSessionsPanel');
+  if (panel) panel.style.display = 'none';
+}
+
+function clearChat() {
+  if (!state.sessionId) {
+    newChat();
+    return;
+  }
+  if (!confirm('确定要清空当前对话历史吗？')) return;
+  fetch(`${API_BASE}/qa/sessions/${state.sessionId}/clear`, { method: 'POST' })
+    .then(() => {
+      state.messages = [];
+      messagesContainer.innerHTML = '';
+      showEmptyState();
+    })
+    .catch(err => alert('清空失败: ' + err.message));
+}
+
+function loadSessions() {
+  toggleSessionsPanel(true);
+  fetch(`${API_BASE}/qa/sessions?limit=50`)
+    .then(r => r.json())
+    .then(data => {
+      state.sessions = data.sessions || [];
+      renderSessionsList();
+    })
+    .catch(err => {
+      $('chatSessionsList').innerHTML = `<p style="padding:16px;color:var(--error);">加载失败: ${err.message}</p>`;
+    });
+}
+
+function toggleSessionsPanel(forceShow) {
+  const panel = $('chatSessionsPanel');
+  if (!panel) return;
+  if (forceShow === true) {
+    panel.style.display = 'block';
+  } else if (forceShow === false) {
+    panel.style.display = 'none';
+  } else {
+    panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+  }
+}
+
+function renderSessionsList() {
+  const list = $('chatSessionsList');
+  if (!state.sessions || state.sessions.length === 0) {
+    list.innerHTML = '<p style="padding:16px;color:var(--text-tertiary);font-size:13px;">暂无历史会话</p>';
+    return;
+  }
+  list.innerHTML = state.sessions.map(s => `
+    <div class="chat-session-item ${s.id === state.sessionId ? 'active' : ''}" onclick="switchSession('${s.id}')">
+      <span class="session-title">${escHtml(s.title || '(新会话)')}</span>
+      <span class="session-time">${s.turns || 0}轮</span>
+      <button class="session-delete" onclick="event.stopPropagation();deleteSession('${s.id}')" title="删除">🗑️</button>
+    </div>
+  `).join('');
+}
+
+function switchSession(sessionId) {
+  if (sessionId === state.sessionId) return;
+  fetch(`${API_BASE}/qa/sessions/${sessionId}`)
+    .then(r => r.json())
+    .then(data => {
+      state.sessionId = sessionId;
+      state.messages = [];
+      messagesContainer.innerHTML = '';
+      // 恢复对话历史
+      (data.turns || []).forEach(t => {
+        const userMsg = { id: Date.now().toString(36) + '_u', role: 'user', content: t.question, timestamp: t.timestamp ? t.timestamp.slice(11, 16) : '' };
+        state.messages.push(userMsg);
+        renderMessage(userMsg);
+        const asstMsg = { id: Date.now().toString(36) + '_a', role: 'assistant', content: t.answer, sources: t.sources || [], timestamp: t.timestamp ? t.timestamp.slice(11, 16) : '' };
+        state.messages.push(asstMsg);
+        renderMessage(asstMsg);
+      });
+      hideEmptyState();
+      toggleSessionsPanel(false);
+    })
+    .catch(err => alert('加载会话失败: ' + err.message));
+}
+
+function deleteSession(sessionId) {
+  if (!confirm('确定要删除此会话吗？')) return;
+  fetch(`${API_BASE}/qa/sessions/${sessionId}`, { method: 'DELETE' })
+    .then(r => r.json())
+    .then(() => {
+      if (sessionId === state.sessionId) {
+        newChat();
+      }
+      loadSessions();
+    })
+    .catch(err => alert('删除失败: ' + err.message));
 }
 
 /* ── Chat input ── */

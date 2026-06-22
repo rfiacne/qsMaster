@@ -43,7 +43,11 @@ indexing:
   batch_size: 100
   ocr_enabled: false
   ocr_backend: auto          # auto | docling | opendataloader | paddle | none
-  doc_timeout_seconds: 120           # 单文档转换超时（秒，OCR 文档可能需要更长时间）
+  doc_timeout_seconds: 120             # 单文档转换超时（秒，OCR/PaddleOCR 首次加载模型较慢）
+
+# ── M7: 文件去重 ────────────────────────────────────────
+# 上传时自动计算文件 MD5，跳过已索引的重复文件
+# 无需配置，自动生效。重复文件记录在 API 响应的 skipped_files 字段
 
 rerank:
   enabled: true                 # M6: 默认启用 Reranker 精排（cross-encoder 二次打分）
