@@ -169,8 +169,13 @@ class HierarchicalDocumentSplitter:
             if chunk:
                 chunks.append(chunk)
 
-            # 重叠部分
-            start = end - (self.overlap if end < len(text) else 0)
+            # 重叠部分 — 确保 start 始终前进，避免无限循环
+            if end >= len(text):
+                break
+            new_start = end - self.overlap
+            if new_start <= start:
+                new_start = start + 1  # 强制前进
+            start = new_start
 
         return chunks
 

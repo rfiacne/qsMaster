@@ -211,6 +211,7 @@ def get_index_pipeline():
                     ocr_enabled=settings.indexing.ocr_enabled,
                     ocr_backend=settings.indexing.ocr_backend,
                     doc_timeout_sec=settings.indexing.doc_timeout_seconds,
+                    embed_timeout_sec=float(settings.embedding.timeout_seconds),
                 )
     return _index_pipeline
 
@@ -447,13 +448,15 @@ async def upload(
         # 在线程池中运行同步阻塞的 pipeline，避免卡死 event loop
         srv_settings = get_settings()
         pipe_timeout = max(60, srv_settings.embedding.timeout_seconds + 30)
+        timed_out = False
         try:
             result = await asyncio.wait_for(
                 asyncio.to_thread(pipeline.run, file_paths, meta_dict),
                 timeout=pipe_timeout,
             )
         except TimeoutError:
-            raise RuntimeError(f"索引超时 ({pipe_timeout}s)。查看服务端日志确认卡在哪一步。")
+            timed_out = True
+            raise RuntimeError(f"索引超时 ({pipe_timeout}s)。后台线程仍在运行，临时文件将在完成后自动清理。")
 
         # 显式持久化（StoreWriter 不再自动 save）
         store = get_store()
@@ -472,10 +475,11 @@ async def upload(
             "time_ms": result.total_time_ms,
         }
     finally:
-        # 清理临时文件
+        # 清理临时文件 — 超时时不删，后台线程仍在使用
         import shutil
 
-        shutil.rmtree(tmp_dir, ignore_errors=True)
+        if not timed_out:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 # ─── 前端挂载 ─────────────────────────────────────────

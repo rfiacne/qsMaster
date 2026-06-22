@@ -138,6 +138,7 @@ def index(
         ocr_enabled=settings.indexing.ocr_enabled or ocr_backend != "none",
         ocr_backend=ocr_backend,
         doc_timeout_sec=settings.indexing.doc_timeout_seconds,
+        embed_timeout_sec=float(settings.embedding.timeout_seconds),
     )
 
     # 带进度条执行索引

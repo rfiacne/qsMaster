@@ -58,12 +58,14 @@ class IndexingPipeline:
         ocr_enabled: bool = False,
         ocr_backend: str = "auto",
         doc_timeout_sec: float = 120.0,
+        embed_timeout_sec: float = 120.0,
     ):
         self.store_manager = store_manager
         self.embedder = embedder
         self.ocr_enabled = ocr_enabled
         self.ocr_backend = ocr_backend
         self.doc_timeout_sec = doc_timeout_sec
+        self.embed_timeout_sec = embed_timeout_sec
 
         blocks = block_sizes or [500, 100]
         self.splitter = HierarchicalDocumentSplitter(
@@ -178,7 +180,7 @@ class IndexingPipeline:
                     logger.info(f"[步骤] {step}: 使用 Haystack Embedder")
                     embedded_result = run_with_timeout(
                         func=self.embedder.run,
-                        timeout_sec=120.0,
+                        timeout_sec=self.embed_timeout_sec,
                         kwargs={"documents": parents + chunks},
                     )
                     # 用新文档替换原列表
@@ -189,7 +191,7 @@ class IndexingPipeline:
                     logger.info(f"[步骤] {step}: 使用 OpenAI API")
                     embedded_docs = run_with_timeout(
                         func=self._embed_chunks,
-                        timeout_sec=120.0,
+                        timeout_sec=self.embed_timeout_sec,
                         kwargs={"docs": parents + chunks},
                     )
                     embedded_map = {d.id: d for d in embedded_docs if d.id}
