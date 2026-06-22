@@ -17,10 +17,11 @@ from typing import Any
 # 确保 src 在路径中
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
-from fastapi import FastAPI, Form, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+from qa.api.middleware import check_rate_limit, log_request_middleware, require_api_key
 from qa.config.settings import get_settings
 from qa.pipelines.indexing import IndexingPipeline, validate_meta
 from qa.pipelines.querying import QueryPipeline
@@ -30,13 +31,27 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Securities QA Agent API", version="0.1.0")
 
-# CORS — 允许前端跨域访问
+
+# ─── Middleware ─────────────────────────────────────────────
+
+# 请求日志中间件（最外层，记录所有请求）
+@app.middleware("http")
+async def request_logging_middleware(request, call_next):
+    return await log_request_middleware(request, call_next)
+
+
+# CORS — 从配置读取允许的来源
+def _get_cors_origins() -> list[str]:
+    settings = get_settings()
+    return settings.server.allowed_origins
+
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_get_cors_origins(),
     allow_credentials=True,
     allow_methods=["*"],
-    allow_headers=["*"],
+    allow_headers=["*", "X-API-Key"],
 )
 
 
@@ -206,7 +221,7 @@ async def status():
 
 
 @app.post("/api/v1/qa/ask")
-async def ask(req: AskRequest):
+async def ask(req: AskRequest, _auth=Depends(check_rate_limit)):
     """问答"""
     try:
         pipeline = get_query_pipeline()
@@ -223,7 +238,7 @@ async def ask(req: AskRequest):
 
 
 @app.post("/api/v1/qa/ask/stream")
-async def ask_stream(req: AskRequest):
+async def ask_stream(req: AskRequest, _auth=Depends(check_rate_limit)):
     """流式问答 — SSE 响应"""
     from fastapi.responses import StreamingResponse
 
@@ -259,7 +274,7 @@ async def ask_stream(req: AskRequest):
 
 
 @app.get("/api/v1/qa/sessions")
-async def list_sessions(limit: int = 20):
+async def list_sessions(limit: int = 20, _auth=Depends(check_rate_limit)):
     """列出最近会话"""
     from qa.pipelines.components.session_store import SessionStore
 
@@ -281,7 +296,7 @@ async def list_sessions(limit: int = 20):
 
 
 @app.delete("/api/v1/qa/sessions/{session_id}")
-async def delete_session(session_id: str):
+async def delete_session(session_id: str, _auth=Depends(check_rate_limit)):
     """删除会话"""
     from qa.pipelines.components.session_store import SessionStore
 
@@ -293,7 +308,7 @@ async def delete_session(session_id: str):
 
 
 @app.post("/api/v1/qa/search")
-async def search(req: SearchRequest):
+async def search(req: SearchRequest, _auth=Depends(check_rate_limit)):
     """知识库检索（仅检索，不生成回答）"""
     try:
         pipeline = get_query_pipeline()
@@ -380,6 +395,7 @@ async def upload(
     category: str = Form(default=""),
     effective_date: str = Form(default=""),
     meta: str = Form(default=""),  # 兼容前端 JSON 字符串格式
+    _auth=Depends(check_rate_limit),
 ):
     """上传并索引文档"""
     # 如果前端传了 meta JSON 字符串，从中解析字段
@@ -492,7 +508,7 @@ def _get_answer_store():
 
 
 @app.get("/api/v1/qa/answers")
-async def list_answers(
+async def list_answers(_auth=Depends(check_rate_limit),
     category: str = "",
     keyword: str = "",
     status: str = "",
@@ -522,7 +538,7 @@ async def list_answers(
 
 
 @app.post("/api/v1/qa/answers")
-async def add_answer(req: dict):
+async def add_answer(req: dict, _auth=Depends(check_rate_limit)):
     """添加标准答案"""
     store, std_answer_cls = _get_answer_store()
     q = req.get("question", "").strip()
@@ -541,7 +557,7 @@ async def add_answer(req: dict):
 
 
 @app.delete("/api/v1/qa/answers/{answer_id}")
-async def delete_answer(answer_id: str):
+async def delete_answer(answer_id: str, _auth=Depends(check_rate_limit)):
     """删除标准答案"""
     store, _ = _get_answer_store()
     if store.remove(answer_id):
@@ -550,7 +566,7 @@ async def delete_answer(answer_id: str):
 
 
 @app.patch("/api/v1/qa/answers/{answer_id}/status")
-async def set_answer_status(answer_id: str, req: dict):
+async def set_answer_status(answer_id: str, req: dict, _auth=Depends(check_rate_limit)):
     """启用/禁用标准答案"""
     store, _ = _get_answer_store()
     new_status = req.get("status", "")
@@ -562,7 +578,7 @@ async def set_answer_status(answer_id: str, req: dict):
 
 
 @app.post("/api/v1/qa/answers/{answer_id}/aliases")
-async def add_answer_alias(answer_id: str, req: dict):
+async def add_answer_alias(answer_id: str, req: dict, _auth=Depends(check_rate_limit)):
     """添加别名问题"""
     store, _ = _get_answer_store()
     alias_q = req.get("alias_question", "").strip()
@@ -575,7 +591,7 @@ async def add_answer_alias(answer_id: str, req: dict):
 
 
 @app.get("/api/v1/qa/reviews")
-async def list_reviews(status: str = "", page: int = 1, page_size: int = 20):
+async def list_reviews(status: str = "", page: int = 1, page_size: int = 20, _auth=Depends(check_rate_limit)):
     """审核队列列表"""
     from qa.pipelines.components.review_queue import ReviewWorkflow
 
@@ -593,7 +609,7 @@ async def list_reviews(status: str = "", page: int = 1, page_size: int = 20):
 
 
 @app.post("/api/v1/qa/reviews/{item_id}/label")
-async def label_review(item_id: str, req: dict):
+async def label_review(item_id: str, req: dict, _auth=Depends(check_rate_limit)):
     """标注审核项"""
     from qa.pipelines.components.early_exit import StandardAnswerStore
     from qa.pipelines.components.review_queue import ReviewWorkflow

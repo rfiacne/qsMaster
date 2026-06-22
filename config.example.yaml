@@ -57,6 +57,10 @@ server:
   host: "127.0.0.1"       # 监听地址，0.0.0.0 允许局域网访问
   port: 8001               # 服务端口
   reload: false            # 开发模式自动重启
+  api_keys: []             # M4: API 密钥列表（空=不鉴权，逗号分隔或 YAML 数组）
+  rate_limit_rpm: 60       # M4: 每分钟请求限制（per API key，0=不限）
+  allowed_origins:         # M4: CORS 允许的来源列表
+    - "http://localhost:8001"
 
 # ── M2: Early Exit 标准答案库 ───────────────────────────
 early_exit:

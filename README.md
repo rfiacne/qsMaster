@@ -1,5 +1,7 @@
 # Securities QA Agent
 
+![CI](https://github.com/<owner>/<repo>/actions/workflows/ci.yml/badge.svg)
+
 证券清算与技术知识问答系统。基于 Haystack 2.x + turbovec，覆盖 M1-M5 全链路：
 **导入 → 混合检索 → Early Exit → LLM 生成 → 防幻觉校验 → 人工审核 → 审计留痕 → Web 管理**
 

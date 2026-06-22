@@ -229,6 +229,19 @@ class ServerConfig(BaseSettings):
     host: str = Field(default="127.0.0.1", description="监听地址（0.0.0.0 允许外网访问）")
     port: int = Field(default=8001, ge=1024, le=65535, description="监听端口")
     reload: bool = Field(default=False, description="开发模式：修改代码自动重启")
+    api_keys: list[str] = Field(
+        default_factory=list,
+        description="API 密钥列表（空=不鉴权，向后兼容）。env: QA_SERVER_API_KEYS (逗号分隔)",
+    )
+    rate_limit_rpm: int = Field(
+        default=60,
+        ge=0,
+        description="每分钟请求限制（per API key，0=不限）",
+    )
+    allowed_origins: list[str] = Field(
+        default_factory=lambda: ["http://localhost:8001"],
+        description="CORS 允许的来源列表",
+    )
 
 
 class EarlyExitConfig(BaseSettings):
@@ -484,6 +497,9 @@ class Settings(BaseSettings):
                 "host": self.server.host,
                 "port": self.server.port,
                 "reload": self.server.reload,
+                "api_keys": "***" if self.server.api_keys else "(none)",
+                "rate_limit_rpm": self.server.rate_limit_rpm,
+                "allowed_origins": self.server.allowed_origins,
             },
             "rerank": {
                 "enabled": self.rerank.enabled,
