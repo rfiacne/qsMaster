@@ -386,7 +386,7 @@ class PDFConverter:
 
         for page_num in range(len(doc)):
             page = doc[page_num]
-            pix = page.get_pixmap(dpi=self.dpi)
+            pix = page.get_pixmap(dpi=paddle.dpi)
             img_bytes = pix.tobytes("png")
             text = paddle.recognize_page(img_bytes)
             if text.strip():
