@@ -22,10 +22,10 @@ logger = logging.getLogger(__name__)
 
 
 class ApiKeyMixin:
-    """共享 API 密钥解析逻辑（LLM / Embedding / Reranker 通用）"""
+    """共享 API 密钥解析逻辑（LLM / Embedding / Reranker 通用）
 
-    api_key: str | None = None
-    api_key_env: str = ""
+    子类需定义 api_key: str | None 和 api_key_env: str 字段。
+    """
 
     @property
     def resolved_api_key(self) -> str | None:

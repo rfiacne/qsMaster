@@ -29,7 +29,67 @@ from qa.stores.turbovec_store import create_store_manager
 
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Securities QA Agent API", version="0.1.0")
+
+# ─── Lifespan (startup warmup) ──────────────────────────────
+
+
+async def _warmup():
+    """服务启动预热
+
+    预加载 store、BM25 索引、embedder，消除首请求延迟尖峰。
+    预热失败不阻塞服务启动。所有阻塞调用走 to_thread，避免卡住事件循环。
+    """
+    import asyncio
+
+    logger.info("🚀 服务启动预热中...")
+
+    # 1) 预热 Store（加载向量索引）
+    try:
+        store = get_store()
+        chunk_count = await asyncio.to_thread(store.count_chunks)
+        logger.info(f"  ✅ Store 加载完成: {chunk_count} chunks")
+    except Exception as e:
+        logger.warning(f"  ⚠️ Store 预热失败（不阻塞启动）: {e}")
+
+    # 2) 预热 BM25 索引（复用单例，避免预热结果被丢弃）
+    try:
+        settings = get_settings()
+        if settings.retrieval.use_hybrid:
+            store = get_store()
+            if await asyncio.to_thread(store.count_chunks) > 0:
+                bm25_idx = await asyncio.to_thread(get_bm25_index)
+                if bm25_idx is not None and bm25_idx.is_built:
+                    logger.info(f"  ✅ BM25 索引预热完成: {bm25_idx.total_docs} 文档")
+                else:
+                    logger.info("  ℹ️  BM25 索引未构建（知识库为空）")
+            else:
+                logger.info("  ℹ️  跳过 BM25 预热（知识库为空）")
+    except Exception as e:
+        logger.warning(f"  ⚠️ BM25 预热失败（不阻塞启动）: {e}")
+
+    # 3) 预热 Embedder
+    try:
+        from qa.pipelines.components.embedder import embed_query
+
+        test_emb = await asyncio.to_thread(embed_query, "预热测试")
+        if test_emb:
+            logger.info(f"  ✅ Embedder 预热完成: dim={len(test_emb)}")
+    except Exception as e:
+        logger.warning(f"  ⚠️ Embedder 预热失败（不阻塞启动）: {e}")
+
+    logger.info("🏁 服务启动预热完成")
+
+
+from contextlib import asynccontextmanager
+
+
+@asynccontextmanager
+async def lifespan(app_instance):
+    await _warmup()
+    yield
+
+
+app = FastAPI(title="Securities QA Agent API", version="0.1.0", lifespan=lifespan)
 
 
 # ─── Middleware ─────────────────────────────────────────────
@@ -153,57 +213,6 @@ def get_index_pipeline():
                     doc_timeout_sec=settings.indexing.doc_timeout_seconds,
                 )
     return _index_pipeline
-
-
-# ─── Startup 预热 ─────────────────────────────────────
-
-
-@app.on_event("startup")
-async def warmup():
-    """服务启动预热
-
-    预加载 store、BM25 索引、embedder，消除首请求延迟尖峰。
-    预热失败不阻塞服务启动。所有阻塞调用走 to_thread，避免卡住事件循环。
-    """
-    import asyncio
-
-    logger.info("🚀 服务启动预热中...")
-
-    # 1) 预热 Store（加载向量索引）
-    try:
-        store = get_store()
-        chunk_count = await asyncio.to_thread(store.count_chunks)
-        logger.info(f"  ✅ Store 加载完成: {chunk_count} chunks")
-    except Exception as e:
-        logger.warning(f"  ⚠️ Store 预热失败（不阻塞启动）: {e}")
-
-    # 2) 预热 BM25 索引（复用单例，避免预热结果被丢弃）
-    try:
-        settings = get_settings()
-        if settings.retrieval.use_hybrid:
-            store = get_store()
-            if await asyncio.to_thread(store.count_chunks) > 0:
-                bm25_idx = await asyncio.to_thread(get_bm25_index)
-                if bm25_idx is not None and bm25_idx.is_built:
-                    logger.info(f"  ✅ BM25 索引预热完成: {bm25_idx.total_docs} 文档")
-                else:
-                    logger.info("  ℹ️  BM25 索引未构建（知识库为空）")
-            else:
-                logger.info("  ℹ️  跳过 BM25 预热（知识库为空）")
-    except Exception as e:
-        logger.warning(f"  ⚠️ BM25 预热失败（不阻塞启动）: {e}")
-
-    # 3) 预热 Embedder
-    try:
-        from qa.pipelines.components.embedder import embed_query
-
-        test_emb = await asyncio.to_thread(embed_query, "预热测试")
-        if test_emb:
-            logger.info(f"  ✅ Embedder 预热完成: dim={len(test_emb)}")
-    except Exception as e:
-        logger.warning(f"  ⚠️ Embedder 预热失败（不阻塞启动）: {e}")
-
-    logger.info("🏁 服务启动预热完成")
 
 
 # ─── API 路由 ─────────────────────────────────────────
