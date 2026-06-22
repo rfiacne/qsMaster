@@ -46,10 +46,15 @@ def _get_cors_origins() -> list[str]:
     return settings.server.allowed_origins
 
 
+_origins = _get_cors_origins()
+_has_wildcard = "*" in _origins
+if _has_wildcard:
+    logger.warning("CORS: allowed_origins contains '*' — allow_credentials disabled for safety")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=_get_cors_origins(),
-    allow_credentials=True,
+    allow_origins=_origins,
+    allow_credentials=not _has_wildcard,
     allow_methods=["*"],
     allow_headers=["*", "X-API-Key"],
 )
@@ -631,7 +636,7 @@ async def label_review(item_id: str, req: dict, _auth=Depends(check_rate_limit))
 
 
 @app.get("/api/v1/qa/reviews/stats")
-async def review_stats():
+async def review_stats(_auth=Depends(check_rate_limit)):
     """审核统计"""
     from qa.pipelines.components.review_queue import ReviewWorkflow
 

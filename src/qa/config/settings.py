@@ -14,8 +14,9 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import Field, model_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings.sources import EnvSettingsSource
 
 logger = logging.getLogger(__name__)
 
@@ -242,6 +243,41 @@ class ServerConfig(BaseSettings):
         default_factory=lambda: ["http://localhost:8001"],
         description="CORS 允许的来源列表",
     )
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls,
+        init_settings,
+        env_settings,
+        dotenv_settings,
+        file_secret_settings,
+    ):
+        """Use CSV-capable env source for list[str] fields.
+
+        pydantic-settings v2 defaults to JSON for list fields. This custom
+        source falls back to CSV when JSON parsing fails:
+            QA_SERVER_API_KEYS=sk-1,sk-2  →  ["sk-1", "sk-2"]
+            QA_SERVER_API_KEYS=             →  []
+        """
+        import json as _json
+
+        class _CSVEnvSource(EnvSettingsSource):
+            def decode_complex_value(self, field_name, field, value):
+                try:
+                    return _json.loads(value)
+                except (ValueError, TypeError):
+                    if isinstance(value, str):
+                        items = [item.strip() for item in value.split(",") if item.strip()]
+                        return items if items else []
+                    raise
+
+        return (
+            init_settings,
+            _CSVEnvSource(settings_cls),
+            dotenv_settings,
+            file_secret_settings,
+        )
 
 
 class EarlyExitConfig(BaseSettings):

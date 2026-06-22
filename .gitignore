@@ -34,3 +34,5 @@ __pycache__/
 # Pix Agent
 .pi/
 .pi-lens/
+=2.0.0
+MagicMock/

@@ -17,6 +17,7 @@ API Gateway 中间件 — 认证 + 限流 + 请求日志
 from __future__ import annotations
 
 import logging
+import secrets
 import time
 from collections import defaultdict
 from threading import Lock
@@ -69,7 +70,7 @@ async def require_api_key(
         return None
 
     # 校验
-    if not api_key or api_key not in configured_keys:
+    if not api_key or not any(secrets.compare_digest(api_key, k) for k in configured_keys):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or missing API key",
@@ -157,7 +158,7 @@ async def check_rate_limit(
         return
 
     # 使用 api_key 或 client IP 作为限流 key
-    key = api_key or request.client.host if request.client else "unknown"
+    key = api_key or (request.client.host if request.client else "unknown")
     limiter = get_rate_limiter()
     allowed, remaining, limit = limiter.check(key)
 
