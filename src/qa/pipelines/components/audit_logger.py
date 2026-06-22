@@ -121,54 +121,107 @@ class AuditStore:
         Returns:
             (records, total_count)
         """
-        all_records = self._read_all()
-
-        # 过滤
-        filtered = []
-        for r in all_records:
-            if start and r.timestamp < start:
-                continue
-            if end and r.timestamp > end:
-                continue
-            if session_id and session_id not in r.session_id:
-                continue
-            if keyword:
-                kw = keyword.lower()
-                if kw not in r.question.lower() and kw not in (r.answer or "").lower():
+        # 快路径：无过滤条件时尾部读取（避免全量加载）
+        has_filters = start or end or keyword or session_id
+        if not has_filters and page == 1:
+            records = self._iter_lines(from_tail=True, limit=page_size)
+        else:
+            # 慢路径：全量加载后过滤
+            all_records = self._read_all()
+            filtered = []
+            for r in all_records:
+                if start and r.timestamp < start:
                     continue
-            filtered.append(r)
+                if end and r.timestamp > end:
+                    continue
+                if session_id and session_id not in r.session_id:
+                    continue
+                if keyword:
+                    kw = keyword.lower()
+                    if kw not in r.question.lower() and kw not in (r.answer or "").lower():
+                        continue
+                filtered.append(r)
+            filtered.sort(key=lambda r: r.timestamp, reverse=True)
+            start_idx = (page - 1) * page_size
+            records = filtered[start_idx:start_idx + page_size]
 
-        # 按时间倒序
-        filtered.sort(key=lambda r: r.timestamp, reverse=True)
+        return records, self._count_lines()
 
-        total = len(filtered)
-
-        # 分页
-        start_idx = (page - 1) * page_size
-        end_idx = start_idx + page_size
-        page_records = filtered[start_idx:end_idx]
-
-        return page_records, total
+    def _count_lines(self) -> int:
+        """高效行数统计（仅数换行符，不解析 JSON）"""
+        if not self.log_file.exists():
+            return 0
+        count = 0
+        with self._lock:
+            with open(self.log_file, encoding="utf-8") as f:
+                for _ in f:
+                    count += 1
+        return count
 
     def _read_all(self) -> list[AuditRecord]:
-        """读取全部审计记录"""
+        """读取全部审计记录（逐行解析）"""
+        if not self.log_file.exists():
+            return []
+        return list(self._iter_lines(from_tail=False))
+
+    def _iter_lines(self, from_tail: bool = False, limit: int = 0) -> list[AuditRecord]:
+        """迭代式读取 JSONL 行
+
+        Args:
+            from_tail: True 从尾部读取（最新优先）
+            limit: 非 0 时限制条数
+        """
         if not self.log_file.exists():
             return []
 
-        records = []
+        records: list[AuditRecord] = []
         with self._lock:
             with open(self.log_file, encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        data = json.loads(line)
-                        records.append(AuditRecord.from_dict(data))
-                    except json.JSONDecodeError:
-                        logger.warning(f"审计日志解析失败: {line[:80]}")
-                        continue
+                if from_tail and limit:
+                    # 从文件末尾读取最后 N 行
+                    records = self._tail_lines(f, limit)
+                else:
+                    for line in f:
+                        r = self._parse_line(line)
+                        if r:
+                            records.append(r)
+                            if limit and len(records) >= limit:
+                                break
         return records
+
+    def _tail_lines(self, f, n: int) -> list[AuditRecord]:
+        """从文件尾部读取最后 N 条有效记录"""
+        f.seek(0, 2)  # 到文件末尾
+        file_size = f.tell()
+        buffer_size = 4096
+        lines: list[str] = []
+        pos = file_size
+
+        while pos > 0 and len(lines) < n * 2:  # 多读一些应对空行/坏行
+            read_size = min(buffer_size, pos)
+            pos -= read_size
+            f.seek(pos)
+            chunk = f.read(read_size)
+            lines = chunk.splitlines(keepends=True) + lines
+
+        records: list[AuditRecord] = []
+        for line in reversed(lines):
+            r = self._parse_line(line)
+            if r:
+                records.append(r)
+                if len(records) >= n:
+                    break
+        return records
+
+    def _parse_line(self, line: str) -> AuditRecord | None:
+        line = line.strip()
+        if not line:
+            return None
+        try:
+            return AuditRecord.from_dict(json.loads(line))
+        except json.JSONDecodeError:
+            logger.warning(f"审计日志解析失败: {line[:80]}")
+            return None
 
     def count(self) -> int:
         """总记录数"""

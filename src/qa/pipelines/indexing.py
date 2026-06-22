@@ -187,7 +187,11 @@ class IndexingPipeline:
                     chunks = [embedded_map.get(d.id, d) for d in chunks]
                 else:
                     logger.info(f"[步骤] {step}: 使用 OpenAI API")
-                    embedded_docs = self._embed_chunks(parents + chunks)
+                    embedded_docs = run_with_timeout(
+                        func=self._embed_chunks,
+                        timeout_sec=120.0,
+                        kwargs={"docs": parents + chunks},
+                    )
                     embedded_map = {d.id: d for d in embedded_docs if d.id}
                     parents = [embedded_map.get(d.id, d) for d in parents]
                     chunks = [embedded_map.get(d.id, d) for d in chunks]

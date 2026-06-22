@@ -460,9 +460,9 @@ def _mount_frontend(app_instance):
             "/", StaticFiles(directory=str(frontend_dir), html=True), name="frontend"
         )
         app_instance.add_middleware(NoCacheMiddleware)
-        print(f"前端静态文件已挂载: {frontend_dir}")
+        logger.info(f"前端静态文件已挂载: {frontend_dir}")
     except Exception as e:
-        print(f"前端挂载失败: {e}")
+        logger.warning(f"前端挂载失败: {e}")
 
 
 # ─── 标准答案库 API ─────────────────────────────────
