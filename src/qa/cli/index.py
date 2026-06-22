@@ -193,9 +193,4 @@ def index(
             console.print(f"[red]⚠ {err}[/red]")
 
 
-def _format_bytes(size: int) -> str:
-    for unit in ("B", "KB", "MB", "GB"):
-        if size < 1024:
-            return f"{size:.1f} {unit}"
-        size /= 1024
-    return f"{size:.1f} TB"
+from qa.utils import format_bytes as _format_bytes

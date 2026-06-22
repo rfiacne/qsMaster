@@ -81,7 +81,7 @@ class PaddleOCRBackend:
                 use_textline_orientation=True,
                 lang=self.lang,
                 ocr_version="PP-OCRv6",
-                engine="paddle",
+                engine="transformers",
             )
             logger.info("PaddleOCR PP-OCRv6 模型加载完成")
         except ImportError:

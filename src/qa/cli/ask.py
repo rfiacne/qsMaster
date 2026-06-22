@@ -11,8 +11,7 @@ from rich.console import Console
 from rich.markdown import Markdown
 
 from qa.config.settings import get_settings
-from qa.pipelines.querying import QueryPipeline
-from qa.stores.turbovec_store import create_store_manager
+from qa.pipelines.factory import build_query_pipeline
 
 console = Console()
 ask_app = typer.Typer(name="ask", help="单次问答", no_args_is_help=True)
@@ -29,75 +28,8 @@ def ask(
     """单次问答"""
     settings = get_settings()
 
-    # 初始化向量存储
-    store = create_store_manager(
-        bit_width=settings.vector_store.bit_width,
-        similarity_function=settings.vector_store.similarity_function,
-        persist_path=settings.vector_store.persist_path,
-    )
-
-    # 初始化 EarlyExitMatcher（标准答案库）
-    early_exit_matcher = None
-    if settings.early_exit.enabled:
-        from qa.pipelines.components.early_exit import EarlyExitMatcher
-
-        early_exit_matcher = EarlyExitMatcher(
-            store_path=settings.early_exit.store_path,
-            fuzzy_threshold=settings.early_exit.fuzzy_threshold,
-            enabled=settings.early_exit.enabled,
-        )
-
-    # 初始化 FaithfulnessEvaluator
-    faithfulness_evaluator = None
-    if settings.faithfulness.enabled:
-        from qa.pipelines.components.faithfulness import FaithfulnessEvaluator
-
-        faithfulness_evaluator = FaithfulnessEvaluator(
-            enabled=True,
-            threshold=settings.faithfulness.threshold,
-            max_claims=settings.faithfulness.max_claims,
-            judge_model=settings.faithfulness.judge_model,
-            judge_api_base_url=settings.faithfulness.judge_api_base_url,
-        )
-
-    # 初始化审核队列
-    from qa.pipelines.components.review_queue import ReviewWorkflow
-
-    review_workflow = ReviewWorkflow()
-    review_workflow.ensure_loaded()
-
-    # 初始化审计日志
-    from qa.pipelines.components.audit_logger import AuditStore
-
-    audit_store = AuditStore()
-
-    # 初始化 OpenTelemetry 追踪
-    from qa.pipelines.components.tracing import init_tracing
-
-    init_tracing(
-        service_name=settings.otel.service_name,
-        otlp_endpoint=settings.otel.endpoint,
-        enabled=settings.otel.enabled,
-    )
-
-    # 初始化查询改写器 / 查询缓存 / BM25 索引（M6: 原本配置存在但未接入）
-    from qa.pipelines.factory import build_query_components
-
-    query_rewriter, query_cache, bm25_index = build_query_components(settings, store)
-
-    # 初始化 QueryPipeline
-    pipeline = QueryPipeline(
-        store_manager=store,
-        top_k=top_k or settings.retrieval.top_k,
-        auto_merge_threshold=settings.retrieval.auto_merge_threshold,
-        early_exit_matcher=early_exit_matcher,
-        faithfulness_evaluator=faithfulness_evaluator,
-        review_workflow=review_workflow,
-        audit_store=audit_store,
-        query_rewriter=query_rewriter,
-        query_cache=query_cache,
-        bm25_index=bm25_index,
-    )
+    # 全链路组件由工厂统一构建
+    pipeline = build_query_pipeline(settings, top_k=top_k)
 
     # 解析过滤器
     filters = None

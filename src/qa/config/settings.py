@@ -17,7 +17,31 @@ from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-class LLMConfig(BaseSettings):
+class ApiKeyMixin:
+    """共享 API 密钥解析逻辑（LLM / Embedding / Reranker 通用）"""
+
+    api_key: str | None = None
+    api_key_env: str = ""
+
+    @property
+    def resolved_api_key(self) -> str | None:
+        """获取实际 API 密钥
+
+        优先级: api_key 直接值 > api_key_env 环境变量名 > api_key_env 直接值（兼容误用）
+        """
+        if self.api_key:
+            return self.api_key
+        if self.api_key_env:
+            import os
+
+            val = os.environ.get(self.api_key_env)
+            if val:
+                return val
+            return self.api_key_env  # 用户可能误把 key 填到了这里
+        return None
+
+
+class LLMConfig(ApiKeyMixin, BaseSettings):
     """LLM 配置"""
 
     model_config = SettingsConfigDict(env_prefix="qa_llm_")
@@ -37,26 +61,8 @@ class LLMConfig(BaseSettings):
     )
     timeout_seconds: int = Field(default=30, ge=1, le=300, description="API 超时阈值（秒）")
 
-    @property
-    def resolved_api_key(self) -> str | None:
-        """获取实际 API 密钥
 
-        优先级: api_key 直接值 > api_key_env 环境变量名 > api_key_env 直接值（兼容误用）
-        """
-        if self.api_key:
-            return self.api_key
-        if self.api_key_env:
-            import os
-
-            val = os.environ.get(self.api_key_env)
-            if val:
-                return val
-            # api_key_env 的值可能本身就是 key（用户误把 key 填到了这里）
-            return self.api_key_env
-        return None
-
-
-class EmbeddingConfig(BaseSettings):
+class EmbeddingConfig(ApiKeyMixin, BaseSettings):
     """嵌入模型配置"""
 
     model_config = SettingsConfigDict(env_prefix="qa_embedding_")
@@ -80,23 +86,6 @@ class EmbeddingConfig(BaseSettings):
         description="存储 API 密钥的环境变量名（如 INTERNAL_API_KEY）",
     )
     timeout_seconds: int = Field(default=30, ge=1, le=300, description="API 超时阈值（秒）")
-
-    @property
-    def resolved_api_key(self) -> str | None:
-        """获取实际 API 密钥
-
-        优先级: api_key 直接值 > api_key_env 环境变量名 > api_key_env 直接值（兼容误用）
-        """
-        if self.api_key:
-            return self.api_key
-        if self.api_key_env:
-            import os
-
-            val = os.environ.get(self.api_key_env)
-            if val:
-                return val
-            return self.api_key_env
-        return None
 
 
 class VectorStoreConfig(BaseSettings):
@@ -187,7 +176,7 @@ class IndexingConfig(BaseSettings):
     )
 
 
-class RerankConfig(BaseSettings):
+class RerankConfig(ApiKeyMixin, BaseSettings):
     """重排序（Reranker）配置"""
 
     model_config = SettingsConfigDict(env_prefix="qa_rerank_")
@@ -218,20 +207,6 @@ class RerankConfig(BaseSettings):
         le=50,
         description="Reranker 重排后返回的结果数",
     )
-
-    @property
-    def resolved_api_key(self) -> str | None:
-        """获取实际 API 密钥"""
-        if self.api_key:
-            return self.api_key
-        if self.api_key_env:
-            import os
-
-            val = os.environ.get(self.api_key_env)
-            if val:
-                return val
-            return self.api_key_env
-        return None
 
 
 class ServerConfig(BaseSettings):

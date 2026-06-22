@@ -99,7 +99,7 @@ def status(
         table.add_row("文档数量", str(index_status.document_count))
         table.add_row("文档片段", str(index_status.chunk_count))
         table.add_row("大块数量", str(index_status.parent_count))
-        table.add_row("索引大小", _format_bytes(index_status.index_size_bytes))
+        table.add_row("索引大小", format_bytes(index_status.index_size_bytes))
         table.add_row("最近更新", index_status.last_updated)
         table.add_row("量化宽度", f"{index_status.bit_width}-bit")
         table.add_row("向量维度", str(index_status.dim or "自动"))
@@ -158,14 +158,7 @@ def remove(
         raise typer.Exit(1)
 
 
-def _format_bytes(size: int) -> str:
-    """格式化字节数为可读字符串"""
-    for unit in ("B", "KB", "MB", "GB"):
-        if size < 1024:
-            return f"{size:.1f} {unit}"
-        size /= 1024
-    return f"{size:.1f} TB"
-
+from qa.utils import format_bytes
 
 if __name__ == "__main__":
     app()

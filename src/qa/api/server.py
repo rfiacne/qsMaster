@@ -104,82 +104,9 @@ def reset_runtime_singletons():
 def get_query_pipeline():
     global _query_pipeline
     if _query_pipeline is None:
-        settings = get_settings()
-        reranker = None
-        if settings.rerank.enabled:
-            from qa.pipelines.components.reranker import Reranker
+        from qa.pipelines.factory import build_query_pipeline
 
-            reranker = Reranker(
-                model=settings.rerank.model,
-                api_base_url=settings.rerank.api_base_url,
-                api_key=settings.rerank.resolved_api_key,
-                top_k=settings.rerank.top_k,
-            )
-        # 初始化 EarlyExitMatcher
-        early_exit_matcher = None
-        if settings.early_exit.enabled:
-            from qa.pipelines.components.early_exit import EarlyExitMatcher
-
-            early_exit_matcher = EarlyExitMatcher(
-                store_path=settings.early_exit.store_path,
-                fuzzy_threshold=settings.early_exit.fuzzy_threshold,
-                enabled=settings.early_exit.enabled,
-            )
-
-        # 初始化 FaithfulnessEvaluator
-        faithfulness_evaluator = None
-        if settings.faithfulness.enabled:
-            from qa.pipelines.components.faithfulness import FaithfulnessEvaluator
-
-            faithfulness_evaluator = FaithfulnessEvaluator(
-                enabled=True,
-                threshold=settings.faithfulness.threshold,
-                max_claims=settings.faithfulness.max_claims,
-                judge_model=settings.faithfulness.judge_model,
-                judge_api_base_url=settings.faithfulness.judge_api_base_url,
-            )
-
-        # 初始化审核队列
-        from qa.pipelines.components.review_queue import ReviewWorkflow
-
-        review_workflow = ReviewWorkflow()
-        review_workflow.ensure_loaded()
-
-        # 初始化审计日志
-        from qa.pipelines.components.audit_logger import AuditStore
-
-        audit_store = AuditStore()
-
-        # 初始化 OpenTelemetry 追踪
-        from qa.pipelines.components.tracing import init_tracing
-
-        init_tracing(
-            service_name=settings.otel.service_name,
-            otlp_endpoint=settings.otel.endpoint,
-            enabled=settings.otel.enabled,
-        )
-
-        # 初始化查询改写器 / 查询缓存（M6: 原本配置存在但未接入）
-        from qa.pipelines.factory import build_query_cache, build_query_rewriter
-
-        query_rewriter = build_query_rewriter(settings)
-        query_cache = build_query_cache(settings, get_store())
-
-        _query_pipeline = QueryPipeline(
-            store_manager=get_store(),
-            top_k=settings.retrieval.top_k,
-            auto_merge_threshold=settings.retrieval.auto_merge_threshold,
-            use_hybrid=settings.retrieval.use_hybrid,
-            hybrid_vector_weight=settings.retrieval.hybrid_vector_weight,
-            reranker=reranker,
-            early_exit_matcher=early_exit_matcher,
-            faithfulness_evaluator=faithfulness_evaluator,
-            review_workflow=review_workflow,
-            audit_store=audit_store,
-            query_rewriter=query_rewriter,
-            query_cache=query_cache,
-            bm25_index=get_bm25_index(),
-        )
+        _query_pipeline = build_query_pipeline(get_settings(), get_store())
     return _query_pipeline
 
 

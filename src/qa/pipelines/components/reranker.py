@@ -149,6 +149,7 @@ class Reranker:
                 return scores
             elif "data" in data:
                 # OpenAI 兼容格式: {"data": [{"index": 0, "score": 0.9}, ...]}
+                scores = [0.0] * len(documents)
                 for item in data["data"]:
                     idx = item.get("index")
                     score = item.get("score", 0)

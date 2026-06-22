@@ -861,10 +861,9 @@ class QueryPipeline:
     @staticmethod
     def _short_name(path: str) -> str:
         """从完整路径中提取文件名"""
-        if not path or path == "unknown":
-            return "unknown"
-        # 取最后一个分隔符后的部分
-        name = path.replace("\\", "/").split("/")[-1]
+        from qa.utils import short_name
+
+        return short_name(path)
         # 如果文件名太长（含 UUID 前缀），截断
         if len(name) > 50:
             # 尝试保留后半段（通常是"机构_类别.pdf"）

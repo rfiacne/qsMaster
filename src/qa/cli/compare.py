@@ -275,8 +275,4 @@ def _results_to_dict(results: list) -> list[dict[str, Any]]:
     return data
 
 
-def _short_name(path: str) -> str:
-    """从完整路径中提取文件名"""
-    if not path or path == "unknown":
-        return "unknown"
-    return path.replace("\\", "/").split("/")[-1]
+from qa.utils import short_name as _short_name

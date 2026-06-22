@@ -22,8 +22,7 @@ from rich.table import Table
 
 from qa.config.settings import get_settings
 from qa.pipelines.components.session_store import SessionStore
-from qa.pipelines.querying import QueryPipeline
-from qa.stores.turbovec_store import create_store_manager
+from qa.pipelines.factory import build_query_pipeline, build_store
 
 console = Console()
 chat_app = typer.Typer(name="chat", help="交互式会话", no_args_is_help=True)
@@ -152,7 +151,7 @@ class ChatSession:
         table.add_column("数值", style="white")
         table.add_row("文档数量", str(status.document_count))
         table.add_row("文档片段", str(status.chunk_count))
-        table.add_row("索引大小", _format_bytes(status.index_size_bytes))
+        table.add_row("索引大小", format_bytes(status.index_size_bytes))
         table.add_row("最近更新", status.last_updated)
         console.print(table)
 
@@ -171,12 +170,7 @@ class ChatSession:
             console.print(f"[red]过滤器 JSON 解析失败: {e}[/red]")
 
 
-def _format_bytes(size: int) -> str:
-    for unit in ("B", "KB", "MB", "GB"):
-        if size < 1024:
-            return f"{size:.1f} {unit}"
-        size /= 1024
-    return f"{size:.1f} TB"
+from qa.utils import format_bytes
 
 
 WELCOME_TEXT = """
@@ -240,74 +234,8 @@ def chat(
             session_id = recent[0].id
             console.print(f"[dim]恢复最近会话: {session_id[:8]}...[/dim]")
 
-    # 初始化
-    store = create_store_manager(
-        bit_width=settings.vector_store.bit_width,
-        similarity_function=settings.vector_store.similarity_function,
-        persist_path=settings.vector_store.persist_path,
-    )
-
-    # 初始化 EarlyExitMatcher
-    early_exit_matcher = None
-    if settings.early_exit.enabled:
-        from qa.pipelines.components.early_exit import EarlyExitMatcher
-
-        early_exit_matcher = EarlyExitMatcher(
-            store_path=settings.early_exit.store_path,
-            fuzzy_threshold=settings.early_exit.fuzzy_threshold,
-            enabled=settings.early_exit.enabled,
-        )
-
-    # 初始化 FaithfulnessEvaluator
-    faithfulness_evaluator = None
-    if settings.faithfulness.enabled:
-        from qa.pipelines.components.faithfulness import FaithfulnessEvaluator
-
-        faithfulness_evaluator = FaithfulnessEvaluator(
-            enabled=True,
-            threshold=settings.faithfulness.threshold,
-            max_claims=settings.faithfulness.max_claims,
-            judge_model=settings.faithfulness.judge_model,
-            judge_api_base_url=settings.faithfulness.judge_api_base_url,
-        )
-
-    # 初始化审核队列
-    from qa.pipelines.components.review_queue import ReviewWorkflow
-
-    review_workflow = ReviewWorkflow()
-    review_workflow.ensure_loaded()
-
-    # 初始化审计日志
-    from qa.pipelines.components.audit_logger import AuditStore
-
-    audit_store = AuditStore()
-
-    # 初始化 OpenTelemetry 追踪
-    from qa.pipelines.components.tracing import init_tracing
-
-    init_tracing(
-        service_name=settings.otel.service_name,
-        otlp_endpoint=settings.otel.endpoint,
-        enabled=settings.otel.enabled,
-    )
-
-    # 初始化查询改写器 / 查询缓存 / BM25 索引（M6: 原本配置存在但未接入）
-    from qa.pipelines.factory import build_query_components
-
-    query_rewriter, query_cache, bm25_index = build_query_components(settings, store)
-
-    pipeline = QueryPipeline(
-        store_manager=store,
-        top_k=top_k or settings.retrieval.top_k,
-        auto_merge_threshold=settings.retrieval.auto_merge_threshold,
-        early_exit_matcher=early_exit_matcher,
-        faithfulness_evaluator=faithfulness_evaluator,
-        review_workflow=review_workflow,
-        audit_store=audit_store,
-        query_rewriter=query_rewriter,
-        query_cache=query_cache,
-        bm25_index=bm25_index,
-    )
+    # 全链路组件由工厂统一构建
+    pipeline = build_query_pipeline(settings, top_k=top_k)
 
     # 持久化会话
     session_store = SessionStore()
