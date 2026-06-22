@@ -206,14 +206,18 @@ async def status():
 @app.post("/api/v1/qa/ask")
 async def ask(req: AskRequest):
     """问答"""
-    pipeline = get_query_pipeline()
-    result = pipeline.run(
-        question=req.question,
-        top_k=req.top_k,
-        filters=req.filters,
-        no_llm=req.no_llm,
-    )
-    return result.to_dict()
+    try:
+        pipeline = get_query_pipeline()
+        result = pipeline.run(
+            question=req.question,
+            top_k=req.top_k,
+            filters=req.filters,
+            no_llm=req.no_llm,
+        )
+        return result.to_dict()
+    except Exception as e:
+        logger.error(f"问答请求失败: {e}", exc_info=True)
+        return {"error": str(e), "code": "INTERNAL"}
 
 
 @app.post("/api/v1/qa/ask/stream")
@@ -224,19 +228,23 @@ async def ask_stream(req: AskRequest):
     pipeline = get_query_pipeline()
 
     async def event_generator():
-        for event in pipeline.run_stream(
-            question=req.question,
-            top_k=req.top_k,
-            filters=req.filters,
-        ):
-            import json
+        try:
+            for event in pipeline.run_stream(
+                question=req.question,
+                top_k=req.top_k,
+                filters=req.filters,
+            ):
+                import json
 
-            event_type = event.get("type", "data")
-            data = json.dumps(event, ensure_ascii=False)
-            yield f"event: {event_type}\ndata: {data}\n\n"
+                event_type = event.get("type", "data")
+                data = json.dumps(event, ensure_ascii=False)
+                yield f"event: {event_type}\ndata: {data}\n\n"
 
-            if event_type == "error" or event_type == "done":
-                break
+                if event_type == "error" or event_type == "done":
+                    break
+        except Exception as e:
+            logger.error(f"流式问答异常: {e}", exc_info=True)
+            yield f"event: error\ndata: {{\"error\": \"{str(e)}\"}}\n\n"
 
     return StreamingResponse(
         event_generator(),
