@@ -5,6 +5,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>证券清算知识问答系统</title>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📊</text></svg>">
+<!-- 字体优化：Google Fonts 预连接 + Noto Serif SC（仅用于标题） -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@600;700&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
+<noscript><link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@600;700&display=swap" rel="stylesheet"></noscript>
 <style>
 /* ═══════════════════════════════════════════════════
    Securities QA Agent — Financial Theme
@@ -62,8 +67,9 @@
   --shadow-md: 0 2px 8px rgba(0,0,0,.06);
   --shadow-lg: 0 4px 20px rgba(0,0,0,.08);
 
-  /* Typography */
+  /* Typography — 字体优化：添加 serif 用于标题 */
   --font-sans:  -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --font-serif: 'Noto Serif SC', serif;
   --font-mono:  'SF Mono','Cascadia Code','Consolas','Courier New',monospace;
 
   /* Sizing */
@@ -72,7 +78,49 @@
   --max-content: 780px;
 }
 
-html { font-size: 15px; }
+/* ── Dark mode ────────────────────────────────────── */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --primary:         #ff4d8d;
+    --primary-dark:    #d4266e;
+    --primary-light:   #ff7aaa;
+    --primary-hover:   #e84d7a;
+    --primary-bg:      #2a1020;
+    --primary-subtle:  #1f0a15;
+
+    --gold:            #d4b06a;
+    --gold-light:      #a08040;
+    --gold-bg:         #2a2210;
+
+    --success:         #4caf7a;
+    --success-bg:      #1a2e22;
+    --warning:         #e6b830;
+    --warning-bg:      #2a2210;
+    --error:           #e85555;
+    --error-bg:        #2a1015;
+
+    --text-primary:    #e8e8e8;
+    --text-secondary:  #b0b0b0;
+    --text-tertiary:   #808080;
+    --text-muted:      #606060;
+    --bg-page:         #121212;
+    --bg-white:        #1a1a1a;
+    --bg-card:         #1e1e1e;
+    --bg-input:        #252525;
+    --bg-admin:        #181818;
+
+    --border-color:    #333;
+    --border-light:    #2a2a2a;
+    --border-subtle:   #222;
+
+    --shadow-sm: 0 1px 2px rgba(0,0,0,.2);
+    --shadow-md: 0 2px 8px rgba(0,0,0,.3);
+    --shadow-lg: 0 4px 20px rgba(0,0,0,.4);
+  }
+}
+
+/* 流体排版：使用 clamp() 实现响应式字体大小 */
+html { font-size: clamp(14px, 0.9vw + 12px, 16px); }
 body {
   font-family: var(--font-sans);
   color: var(--text-primary);
@@ -105,9 +153,10 @@ body {
   display: flex; align-items: center; gap: 10px;
 }
 .sidebar-header .logo { font-size: 22px; line-height: 1; }
+/* 标题字体优化：使用 Noto Serif SC 衬线体增强金融权威感 */
 .sidebar-header h1 {
   font-size: 14px; font-weight: 600; color: #e8eef5;
-  letter-spacing: .3px;
+  letter-spacing: .3px; font-family: var(--font-serif);
 }
 .sidebar-header .logo-sub {
   font-size: 10px; color: rgba(255,255,255,.35);
@@ -133,8 +182,15 @@ body {
   transition: all .12s;
   user-select: none;
 }
-.nav-item:hover { background: var(--bg-sidebar-hover); color: rgba(255,255,255,.9); }
-.nav-item.active { background: var(--bg-sidebar-active); color: #fff; font-weight: 500; }
+/* 侧边栏优化：hover 金色光晕效果 */
+.nav-item:hover { background: var(--bg-sidebar-hover); color: rgba(255,255,255,.9); box-shadow: inset 0 0 12px rgba(175,143,80,.15); }
+/* 侧边栏优化：active 状态改为左侧金色色条 + 渐变背景 */
+.nav-item.active {
+  background: linear-gradient(90deg, rgba(199,5,93,.15) 0%, rgba(199,5,93,.05) 100%);
+  border-left: 3px solid var(--gold);
+  color: #fff; font-weight: 500;
+  padding-left: 11px; /* 补偿 3px border */
+}
 .nav-item .icon { font-size: 15px; width: 22px; text-align: center; flex-shrink: 0; opacity: .7; }
 .nav-item.active .icon { opacity: 1; }
 
@@ -173,7 +229,7 @@ body {
   flex-shrink: 0;
 }
 .menu-btn { display: none; background: none; border: none; font-size: 20px; cursor: pointer; padding: 4px; color: var(--text-secondary); }
-.topbar-title { font-size: 15px; font-weight: 600; color: var(--text-primary); }
+.topbar-title { font-size: 15px; font-weight: 600; color: var(--text-primary); font-family: var(--font-serif); }
 .topbar-title .admin-badge {
   font-size: 10px; font-weight: 600;
   background: var(--gold-bg); color: var(--warning);
@@ -192,7 +248,7 @@ body {
 .page-scroll h2 {
   font-size: 18px; font-weight: 600; margin-bottom: 20px;
   display: flex; align-items: center; gap: 8px;
-  color: var(--text-primary);
+  color: var(--text-primary); font-family: var(--font-serif);
   padding-bottom: 12px;
   border-bottom: 2px solid var(--border-subtle);
 }
@@ -291,17 +347,19 @@ body {
   height: 100%; min-height: 320px;
   text-align: center; padding: 40px 20px;
 }
-.empty-state .brand-icon {
+/* 空状态优化：品牌图标使用渐变背景 + 增强阴影 */
+.empty-state .brand-icon, .empty-state .icon {
   width: 80px; height: 80px;
-  background: linear-gradient(135deg, var(--bg-sidebar) 0%, var(--primary-dark) 100%);
+  background: linear-gradient(135deg, var(--primary) 0%, var(--gold) 100%);
   border-radius: 20px;
   display: flex; align-items: center; justify-content: center;
   font-size: 36px; margin-bottom: 20px;
-  box-shadow: 0 4px 16px rgba(26,58,92,.2);
+  box-shadow: 0 8px 24px rgba(199,5,93,.2), 0 4px 8px rgba(0,0,0,.1);
 }
-.empty-state h2 { font-size: 20px; font-weight: 600; margin-bottom: 6px; color: var(--text-primary); }
+.empty-state h2 { font-size: 20px; font-weight: 600; margin-bottom: 6px; color: var(--text-primary); font-family: var(--font-serif); }
 .empty-state .sub { color: var(--text-secondary); font-size: 14px; margin-bottom: 28px; max-width: 420px; }
 .suggestions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; max-width: 520px; width: 100%; }
+/* 空状态优化：建议按钮 hover 时边框变金色 + 轻微上移 */
 .suggestion-btn {
   padding: 12px 16px;
   border: 1px solid var(--border-color);
@@ -310,16 +368,17 @@ body {
   cursor: pointer;
   font-size: 13px;
   color: var(--text-secondary);
-  transition: all .15s;
+  transition: all .2s cubic-bezier(0.4, 0, 0.2, 1);
   text-align: left;
   line-height: 1.5;
   box-shadow: var(--shadow-sm);
 }
 .suggestion-btn:hover {
-  border-color: var(--primary);
+  border-color: var(--gold);
   color: var(--primary);
   background: var(--primary-bg);
   box-shadow: var(--shadow-md);
+  transform: translateY(-2px);
 }
 
 /* ── Messages ── */
@@ -345,14 +404,17 @@ body {
   line-height: 1.75;
   word-wrap: break-word;
 }
+/* 消息气泡优化：用户消息使用渐变背景 */
 .message.user .message-body {
-  background: var(--primary-subtle);
+  background: linear-gradient(135deg, var(--primary-bg), var(--primary-subtle));
   border: 1px solid #d0ddee;
   margin-left: 48px;
 }
+/* 消息气泡优化：助手消息添加左侧金色色条 */
 .message.assistant .message-body {
   background: var(--bg-card);
   border: 1px solid var(--border-color);
+  border-left: 2px solid var(--gold);
   margin-right: 48px;
   box-shadow: var(--shadow-sm);
 }
@@ -410,11 +472,12 @@ body {
   display: inline-flex; align-items: center; gap: 4px;
   font-size: 12px; color: var(--text-secondary); cursor: pointer;
   padding: 4px 10px; border-radius: var(--radius-sm);
-  border: 1px solid var(--border-light); background: var(--bg-primary);
-  transition: all .15s;
+  border: 1px solid var(--border-light); background: var(--bg-card);
+  transition: background .15s, color .15s, border-color .15s;
 }
 .message-actions .action-btn:hover { background: var(--primary-bg); color: var(--primary); border-color: var(--primary-light); }
-.message-actions .action-btn.added { background: var(--success-bg, #e8f5e9); color: var(--success, #2e7d32); border-color: var(--success, #2e7d32); }
+.message-actions .action-btn.added { background: var(--success-bg); color: var(--success); border-color: var(--success); pointer-events: none; }
+.message-actions .action-btn:disabled { opacity: .6; cursor: not-allowed; }
 
 .typing-cursor {
   display: inline-block; width: 2px; height: 1em;
@@ -610,20 +673,21 @@ body {
 .upload-result { margin-top: 12px; }
 
 /* ── Buttons ── */
+/* 按钮优化：添加 hover 上浮效果和阴影增强 */
 .btn {
   display:inline-flex; align-items:center; gap:6px;
   padding:8px 20px; border-radius:var(--radius-sm);
   font-size:13px; font-family:inherit; cursor:pointer;
-  transition:all .15s; border:1px solid transparent;
+  transition:all .2s cubic-bezier(0.4, 0, 0.2, 1); border:1px solid transparent;
   font-weight: 500;
 }
 .btn-primary { background:var(--primary); color:#fff; }
-.btn-primary:hover { background:var(--primary-hover); }
-.btn-primary:disabled { background:var(--border-color); cursor:not-allowed; color:var(--text-muted); }
+.btn-primary:hover { background:var(--primary-hover); transform:translateY(-1px); box-shadow:0 4px 12px rgba(199,5,93,.25); }
+.btn-primary:disabled { background:var(--border-color); cursor:not-allowed; color:var(--text-muted); transform:none; box-shadow:none; }
 .btn-gold { background:var(--gold); color:#fff; }
-.btn-gold:hover { background:#c49a3d; }
+.btn-gold:hover { background:#c49a3d; transform:translateY(-1px); box-shadow:0 4px 12px rgba(175,143,80,.25); }
 .btn-default { background:var(--bg-card); border-color:var(--border-color); color:var(--text-primary); }
-.btn-default:hover { border-color:var(--primary-light); color:var(--primary); }
+.btn-default:hover { border-color:var(--primary-light); color:var(--primary); transform:translateY(-1px); box-shadow:var(--shadow-md); }
 .btn-sm { padding:4px 12px; font-size:12px; }
 .btn-group { display:flex; gap:8px; }
 
@@ -631,7 +695,9 @@ body {
 .data-table { width:100%; border-collapse:collapse; font-size:14px; }
 .data-table th, .data-table td { padding:8px 12px; text-align:left; border-bottom:1px solid var(--border-light); }
 .data-table th { background:var(--bg-admin); font-weight:600; color:var(--text-secondary); position:sticky; top:0; }
-.data-table tr:hover { background:#f5f5f5; }
+/* 表格优化：斑马纹 + hover 高亮 */
+.data-table tbody tr:nth-child(even) { background:rgba(0,0,0,.02); }
+.data-table tbody tr:hover { background:var(--primary-bg); }
 .data-table .btn-sm { margin:0 2px; cursor:pointer; border:none; border-radius:4px; padding:3px 10px; font-size:12px; }
 .data-table .btn-sm:hover { opacity:0.8; }
 
@@ -646,6 +712,8 @@ body {
   background: var(--bg-card); border: 1px solid var(--border-color);
   border-radius: var(--radius-md); padding: 18px 16px;
   text-align: center; box-shadow: var(--shadow-sm);
+  /* 统计卡片优化：添加金色顶部渐变边框 */
+  border-top: 2px solid var(--gold);
 }
 .stat-card .value { font-size: 26px; font-weight: 700; color: var(--primary); font-variant-numeric: tabular-nums; }
 .stat-card .label { font-size: 11px; color: var(--text-tertiary); margin-top: 4px; text-transform: uppercase; letter-spacing: .5px; font-weight: 500; }
@@ -730,304 +798,94 @@ body {
 .chat-area::-webkit-scrollbar, .sidebar-nav::-webkit-scrollbar, .page-scroll::-webkit-scrollbar { width: 5px; }
 .chat-area::-webkit-scrollbar-track, .sidebar-nav::-webkit-scrollbar-track, .page-scroll::-webkit-scrollbar-track { background: transparent; }
 .chat-area::-webkit-scrollbar-thumb, .sidebar-nav::-webkit-scrollbar-thumb, .page-scroll::-webkit-scrollbar-thumb { background: #c0c0c0; border-radius: 3px; }
-.chat-area::-webkit-scrollbar-thumb:hover { background: #a0a0a0; }
+.chat-area::-webkit-scrollbar-thumb:hover, .sidebar-nav::-webkit-scrollbar-thumb:hover, .page-scroll::-webkit-scrollbar-thumb:hover { background: #a0a0a0; }
 
-/* ── Messages ── */
-.message { margin-bottom: 20px; animation: msg-in .3s ease; }
-@keyframes msg-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
-.message-header { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 13px; }
-.message-avatar { width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 14px; flex-shrink: 0; }
-.message-avatar.user { background: var(--primary-bg); color: var(--primary); }
-.message-avatar.assistant { background: var(--success-bg); color: var(--success); }
-.message-author { font-weight: 500; }
-.message-time { color: var(--text-tertiary); font-size: 12px; margin-left: auto; }
-.message-body {
-  padding: 12px 16px; border-radius: var(--radius-md);
-  font-size: 14px; line-height: 1.7; word-wrap: break-word;
+/* ── Focus states for accessibility ── */
+/* 焦点样式优化：改为金色轮廓，符合 crimson+gold 配色 */
+.nav-item:focus-visible, .action-btn:focus-visible, .send-btn:focus-visible, .btn:focus-visible,
+.form-input:focus-visible, .form-select:focus-visible, .suggestion-btn:focus-visible {
+  outline: 2px solid var(--gold);
+  outline-offset: 2px;
 }
-.message.user .message-body {
-  background: var(--bg-user-msg, #e6f4ff);
-  border: 1px solid #bae0ff; margin-left: 40px;
-}
-.message.assistant .message-body {
-  background: var(--success-bg);
-  border: 1px solid #b7eb8f; margin-right: 40px;
-}
-.message-body p { margin-bottom: 8px; }
-.message-body p:last-child { margin-bottom: 0; }
-.message-body ul, .message-body ol { padding-left: 20px; margin-bottom: 8px; }
-.message-body code { font-family: var(--font-mono); background: rgba(0,0,0,.06); padding: 2px 6px; border-radius: 3px; font-size: 13px; }
-.message-body pre {
-  background: #1e1e1e; color: #d4d4d4; padding: 12px 16px; border-radius: var(--radius-sm);
-  overflow-x: auto; margin-bottom: 8px; font-size: 13px; line-height: 1.5;
-}
-.message-body pre code { background: none; padding: 0; font-size: 13px; }
-.typing-cursor { display: inline-block; width: 2px; height: 1em; background: var(--primary); margin-left: 2px; animation: blink .8s infinite; vertical-align: text-bottom; }
-@keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
-
-/* ── Sources ── */
-.sources-section { margin-top: 10px; }
-.sources-toggle {
-  display: inline-flex; align-items: center; gap: 4px;
-  font-size: 13px; color: var(--primary); cursor: pointer;
-  padding: 4px 8px; border-radius: var(--radius-sm); transition: background .15s; user-select: none;
-}
-.sources-toggle:hover { background: var(--primary-bg); }
-.sources-list { margin-top: 8px; border: 1px solid var(--border-color); border-radius: var(--radius-sm); overflow: hidden; }
-.source-item { padding: 8px 12px; border-bottom: 1px solid var(--border-light); cursor: pointer; transition: background .1s; font-size: 13px; }
-.source-item:last-child { border-bottom: none; }
-.source-item:hover { background: var(--bg-page); }
-.source-badge { display: inline-block; width: 20px; height: 20px; line-height: 20px; text-align: center; border-radius: 50%; background: var(--primary-bg); color: var(--primary); font-size: 11px; font-weight: 600; margin-right: 8px; }
-.source-title { font-weight: 500; }
-.source-score { color: var(--text-tertiary); font-size: 12px; margin-left: 8px; }
-.source-meta { font-size: 12px; color: var(--text-tertiary); margin-top: 4px; padding-left: 28px; }
-.source-content { font-size: 13px; color: var(--text-secondary); margin-top: 4px; padding: 8px 12px; padding-left: 28px; background: var(--bg-page); border-radius: var(--radius-sm); display: none; white-space: pre-wrap; }
-.source-item.expanded .source-content { display: block; }
-
-/* ── Status / Error ── */
-.status-msg {
-  display: flex; align-items: center; gap: 8px;
-  padding: 8px 16px; margin-bottom: 12px;
-  font-size: 13px; color: var(--text-secondary);
-  animation: msg-in .3s ease;
-}
-.status-msg .spinner { width: 14px; height: 14px; border: 2px solid var(--border-color); border-top-color: var(--primary); border-radius: 50%; animation: spin .8s linear infinite; }
-@keyframes spin { to { transform: rotate(360deg); } }
-.error-msg {
-  padding: 12px 16px; margin-bottom: 12px; border-radius: var(--radius-sm);
-  font-size: 13px; display: flex; align-items: flex-start; gap: 8px;
-}
-.error-msg.error { background: var(--error-bg); border: 1px solid #ffccc7; color: var(--error); }
-.error-msg.warning { background: #fffbe6; border: 1px solid #ffe58f; color: #ad8b00; }
-.error-msg.success { background: var(--success-bg); border: 1px solid #b7eb8f; color: #389e0d; }
-.error-msg .icon { font-size: 16px; flex-shrink: 0; }
-.error-msg .retry-btn { margin-left: auto; padding: 2px 10px; background: var(--bg-white); border: 1px solid var(--border-color); border-radius: var(--radius-sm); cursor: pointer; font-size: 12px; flex-shrink: 0; }
-.error-msg .retry-btn:hover { border-color: var(--primary); color: var(--primary); }
-
-/* ── Input ── */
-.input-area { flex-shrink: 0; background: var(--bg-white); border-top: 1px solid var(--border-color); padding: 12px 20px; }
-.input-inner { max-width: var(--max-content); margin: 0 auto; display: flex; gap: 8px; align-items: flex-end; }
-.input-wrapper {
-  flex: 1; display: flex; align-items: center;
-  border: 1px solid var(--border-color); border-radius: var(--radius-md);
-  background: var(--bg-page); transition: border-color .15s;
-}
-.input-wrapper:focus-within { border-color: var(--primary); background: var(--bg-white); }
-.input-wrapper textarea {
-  flex: 1; border: none; outline: none; padding: 10px 14px;
-  background: transparent; font-size: 14px; font-family: inherit; line-height: 1.5;
-  resize: none; min-height: 42px; max-height: 120px; color: var(--text-primary);
-}
-.input-wrapper textarea::placeholder { color: var(--text-tertiary); }
-.send-btn {
-  width: 42px; height: 42px; border: none; border-radius: 50%;
-  background: var(--primary); color: #fff; font-size: 18px;
-  cursor: pointer; display: flex; align-items: center; justify-content: center;
-  transition: all .15s; flex-shrink: 0;
-}
-.send-btn:hover { background: var(--primary-hover); }
-.send-btn:disabled { background: var(--border-color); cursor: not-allowed; }
-
-/* ══════════ Modal ══════════ */
-.modal-overlay { display: none; position: fixed; z-index: 200; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,.45); align-items: center; justify-content: center; }
-.modal-overlay.open { display: flex; }
-.modal { background: var(--bg-white); border-radius: var(--radius-lg); width: 90%; max-width: 520px; max-height: 80vh; display: flex; flex-direction: column; box-shadow: var(--shadow-lg); animation: modal-in .2s ease; }
-@keyframes modal-in { from { opacity: 0; transform: scale(.95); } to { opacity: 1; transform: scale(1); } }
-.modal-header { padding: 16px 20px; border-bottom: 1px solid var(--border-light); display: flex; align-items: center; justify-content: space-between; }
-.modal-header h2 { font-size: 16px; font-weight: 600; }
-.modal-close { background: none; border: none; font-size: 20px; cursor: pointer; color: var(--text-tertiary); padding: 4px; }
-.modal-body { padding: 20px; overflow-y: auto; flex: 1; }
-
-/* ══════════ Forms (Admin pages) ══════════ */
-.form-group { margin-bottom: 16px; }
-.form-group label { display: block; font-size: 13px; font-weight: 500; color: var(--text-primary); margin-bottom: 6px; }
-.form-group label .required { color: var(--error); margin-left: 2px; }
-.form-group label .hint { font-weight: 400; color: var(--text-tertiary); font-size: 12px; margin-left: 6px; }
-.form-input, .form-select {
-  width: 100%; padding: 8px 12px;
-  border: 1px solid var(--border-color); border-radius: var(--radius-sm);
-  font-size: 14px; font-family: inherit; background: var(--bg-white);
-  transition: border-color .15s; color: var(--text-primary);
-}
-.form-input:focus, .form-select:focus { border-color: var(--primary); outline: none; box-shadow: 0 0 0 2px rgba(22,119,255,.15); }
-.form-input.error { border-color: var(--error); }
-.form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-
-/* ── File Upload ── */
-.upload-zone {
-  border: 2px dashed var(--border-color); border-radius: var(--radius-md);
-  padding: 36px 20px; text-align: center; cursor: pointer;
-  transition: all .2s; background: var(--bg-page); margin-bottom: 16px;
-}
-.upload-zone:hover, .upload-zone.dragover { border-color: var(--primary); background: var(--primary-bg); }
-.upload-zone .icon { font-size: 40px; margin-bottom: 8px; }
-.upload-zone p { color: var(--text-secondary); font-size: 14px; }
-.upload-zone .hint { color: var(--text-tertiary); font-size: 12px; margin-top: 4px; }
-.upload-zone input[type="file"] { display: none; }
-
-/* ── File List (pending upload) ── */
-.file-list { margin-bottom: 16px; }
-.file-item {
-  display: flex; align-items: center; gap: 10px;
-  padding: 8px 12px; background: var(--bg-white);
-  border: 1px solid var(--border-color); border-radius: var(--radius-sm);
-  margin-bottom: 6px; font-size: 13px;
-}
-.file-item .name { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.file-item .size { color: var(--text-tertiary); font-size: 12px; flex-shrink: 0; }
-.file-item .remove-btn {
-  background: none; border: none; cursor: pointer;
-  color: var(--text-tertiary); font-size: 16px; padding: 2px;
-  flex-shrink: 0;
-}
-.file-item .remove-btn:hover { color: var(--error); }
-
-/* ── Upload Progress ── */
-.progress-bar {
-  width: 100%; height: 6px; background: var(--border-light);
-  border-radius: 3px; overflow: hidden; margin: 8px 0;
-}
-.progress-bar .fill {
-  height: 100%; background: var(--primary); border-radius: 3px;
-  transition: width .3s ease; width: 0%;
-}
-.upload-result { margin-top: 12px; }
-
-/* ── Admin action buttons ── */
-.btn {
-  display: inline-flex; align-items: center; gap: 6px;
-  padding: 8px 20px; border-radius: var(--radius-sm);
-  font-size: 14px; font-family: inherit; cursor: pointer;
-  transition: all .15s; border: 1px solid transparent;
-}
-.btn-primary { background: var(--primary); color: #fff; }
-.btn-primary:hover { background: var(--primary-hover); }
-.btn-primary:disabled { background: var(--border-color); cursor: not-allowed; }
-.btn-default { background: var(--bg-white); border-color: var(--border-color); color: var(--text-primary); }
-.btn-default:hover { border-color: var(--primary); color: var(--primary); }
-.btn-sm { padding: 4px 12px; font-size: 13px; }
-
-/* ── KB Stats ── */
-.kb-stats {
-  display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-  gap: 12px; margin-bottom: 24px;
-}
-.stat-card {
-  background: var(--bg-white); border: 1px solid var(--border-color);
-  border-radius: var(--radius-md); padding: 16px; text-align: center;
-}
-.stat-card .value { font-size: 28px; font-weight: 700; color: var(--primary); }
-.stat-card .label { font-size: 13px; color: var(--text-secondary); margin-top: 4px; }
-
-/* ── Search Results ── */
-.search-box {
-  display: flex; gap: 8px; margin-bottom: 20px;
-}
-.search-box input { flex: 1; }
-.search-result-count { font-size: 13px; color: var(--text-tertiary); margin-bottom: 12px; }
-.search-result-item {
-  background: var(--bg-white); border: 1px solid var(--border-color);
-  border-radius: var(--radius-sm); padding: 14px 16px; margin-bottom: 8px;
-}
-.search-result-item .file-path { font-size: 12px; color: var(--text-tertiary); margin-bottom: 4px; }
-.search-result-item .content { font-size: 14px; color: var(--text-primary); line-height: 1.6; white-space: pre-wrap; }
-.search-result-item .meta { display: flex; gap: 12px; margin-top: 8px; font-size: 12px; color: var(--text-tertiary); flex-wrap: wrap; }
-.search-result-item .meta .tag {
-  background: var(--primary-bg); color: var(--primary);
-  padding: 2px 8px; border-radius: 10px; font-size: 11px;
-}
-.search-empty { text-align: center; padding: 40px; color: var(--text-tertiary); }
-.search-empty .icon { font-size: 40px; margin-bottom: 8px; }
-
-/* ── History ── */
-.history-list { display: flex; flex-direction: column; gap: 8px; }
-.history-item {
-  padding: 12px 16px; background: var(--bg-white); border: 1px solid var(--border-color);
-  border-radius: var(--radius-sm); display: flex; align-items: center; gap: 12px;
-  cursor: pointer; transition: all .1s;
-}
-.history-item:hover { border-color: var(--primary); }
-.history-item .q { flex: 1; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.history-item .time { font-size: 12px; color: var(--text-tertiary); flex-shrink: 0; }
-
-/* ══════════ Responsive ══════════ */
-.sidebar-overlay { display: none; position: fixed; z-index: 99; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,.3); }
-@media (max-width: 768px) {
-  .sidebar {
-    position: fixed; left: 0; top: 0; height: 100%;
-    transform: translateX(-100%); box-shadow: var(--shadow-lg);
-  }
-  .sidebar.open { transform: translateX(0); }
-  .sidebar-overlay.open { display: block; }
-  .menu-btn { display: block; }
-  .suggestions { grid-template-columns: 1fr; }
-  .message.user .message-body { margin-left: 0; }
-  .message.assistant .message-body { margin-right: 0; }
-  .form-row { grid-template-columns: 1fr; }
-  .kb-stats { grid-template-columns: repeat(2, 1fr); }
-  .page-scroll { padding: 16px; }
-}
-@media (max-width: 480px) { html { font-size: 14px; } .empty-state .icon { font-size: 40px; } }
-
-/* Scrollbar */
-.chat-area::-webkit-scrollbar, .sidebar-nav::-webkit-scrollbar, .page-scroll::-webkit-scrollbar { width: 6px; }
-.chat-area::-webkit-scrollbar-track, .sidebar-nav::-webkit-scrollbar-track, .page-scroll::-webkit-scrollbar-track { background: transparent; }
-.chat-area::-webkit-scrollbar-thumb, .sidebar-nav::-webkit-scrollbar-thumb, .page-scroll::-webkit-scrollbar-thumb { background: #d9d9d9; border-radius: 3px; }
 
 /* Streaming cursor blink */
 .streaming-cursor { animation: blink 0.8s step-end infinite; color: var(--primary); font-weight: bold; }
-@keyframes blink { 50% { opacity: 0; } }
+/* ── Reduced motion support ── */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ── Skip link for accessibility ── */
+.skip-link {
+  position: absolute;
+  top: -40px;
+  left: 0;
+  background: var(--primary);
+  color: white;
+  padding: 8px;
+  text-decoration: none;
+  z-index: 1000;
+}
+
+.skip-link:focus {
+  top: 0;
+}
 </style>
 </head>
 <body>
+<a href="#chatArea" class="skip-link">跳到主要内容</a>
 <div class="app">
 
   <!-- ====== Sidebar ====== -->
-  <aside class="sidebar" id="sidebar">
+  <aside class="sidebar" id="sidebar" role="complementary" aria-label="侧边栏导航">
     <div class="sidebar-header">
-      <span class="logo">📊</span>
+      <span class="logo" aria-hidden="true">📊</span>
       <h1>证券清算知识问答</h1>
     </div>
-    <nav class="sidebar-nav">
+    <nav class="sidebar-nav" role="navigation" aria-label="主导航">
 
       <!-- 前台：对话 -->
-      <div class="nav-section-label">💬 对话</div>
-      <div class="nav-item active" data-page="chat">
-        <span class="icon">💬</span> 问答
+      <div class="nav-section-label" role="heading" aria-level="2">💬 对话</div>
+      <div class="nav-item active" data-page="chat" role="button" tabindex="0" aria-current="page">
+        <span class="icon" aria-hidden="true">💬</span> 问答
       </div>
-      <div class="nav-item" data-page="history">
-        <span class="icon">🕐</span> 历史记录
+      <div class="nav-item" data-page="history" role="button" tabindex="0">
+        <span class="icon" aria-hidden="true">🕐</span> 历史记录
       </div>
 
-      <div class="nav-divider"></div>
+      <div class="nav-divider" role="separator"></div>
 
       <!-- 后台：管理 -->
       <div class="nav-section-admin">
-        <div class="nav-section-label">⚙️ 后台管理</div>
-        <div class="nav-item admin-item" data-page="import">
-          <span class="icon">📤</span> 导入文档
+        <div class="nav-section-label" role="heading" aria-level="2">⚙️ 后台管理</div>
+        <div class="nav-item admin-item" data-page="import" role="button" tabindex="0">
+          <span class="icon" aria-hidden="true">📤</span> 导入文档
         </div>
-        <div class="nav-item admin-item" data-page="search-kb">
-          <span class="icon">🔍</span> 知识库检索
+        <div class="nav-item admin-item" data-page="search-kb" role="button" tabindex="0">
+          <span class="icon" aria-hidden="true">🔍</span> 知识库检索
         </div>
-        <div class="nav-item admin-item" data-page="kb-status">
-          <span class="icon">📊</span> 知识库状态
+        <div class="nav-item admin-item" data-page="kb-status" role="button" tabindex="0">
+          <span class="icon" aria-hidden="true">📊</span> 知识库状态
         </div>
-        <div class="nav-item admin-item" data-page="standards">
-          <span class="icon">📋</span> 标准答案
+        <div class="nav-item admin-item" data-page="standards" role="button" tabindex="0">
+          <span class="icon" aria-hidden="true">📋</span> 标准答案
         </div>
-        <div class="nav-item admin-item" data-page="reviews">
-          <span class="icon">✅</span> 审核队列
+        <div class="nav-item admin-item" data-page="reviews" role="button" tabindex="0">
+          <span class="icon" aria-hidden="true">✅</span> 审核队列
         </div>
       </div>
 
-      <div class="nav-divider"></div>
-      <div class="nav-item" onclick="document.getElementById('aboutModal').classList.add('open')">
-        <span class="icon">ℹ️</span> 关于
+      <div class="nav-divider" role="separator"></div>
+      <div class="nav-item" onclick="document.getElementById('aboutModal').classList.add('open')" role="button" tabindex="0">
+        <span class="icon" aria-hidden="true">ℹ️</span> 关于
       </div>
     </nav>
     <div class="sidebar-footer">
-      <span><span class="status-dot" id="statusDot"></span><span id="statusText">就绪</span></span>
+      <span><span class="status-dot" id="statusDot" aria-hidden="true"></span><span id="statusText" role="status">就绪</span></span>
       <span>v0.1.0</span>
     </div>
   </aside>
@@ -1046,50 +904,50 @@ body {
     <!-- ══════ Chat Page ══════ -->
     <div class="page-content active" id="pageChat">
       <!-- 会话工具栏 -->
-      <div class="chat-toolbar">
-        <button class="chat-toolbar-btn" onclick="newChat()" title="新建对话">
-          <span>➕</span> 新对话
+      <div class="chat-toolbar" role="toolbar" aria-label="聊天工具栏">
+        <button class="chat-toolbar-btn" onclick="newChat()" title="新建对话" aria-label="新建对话">
+          <span aria-hidden="true">➕</span> 新对话
         </button>
-        <button class="chat-toolbar-btn" onclick="clearChat()" title="清空当前对话">
-          <span>🗑️</span> 清空
+        <button class="chat-toolbar-btn" onclick="clearChat()" title="清空当前对话" aria-label="清空当前对话">
+          <span aria-hidden="true">🗑️</span> 清空
         </button>
         <div class="chat-toolbar-spacer"></div>
-        <button class="chat-toolbar-btn" onclick="loadSessions()" title="会话列表">
-          <span>📋</span> 历史会话
+        <button class="chat-toolbar-btn" onclick="loadSessions()" title="会话列表" aria-label="查看历史会话列表">
+          <span aria-hidden="true">📋</span> 历史会话
         </button>
       </div>
       <!-- 会话列表（可折叠） -->
-      <div class="chat-sessions-panel" id="chatSessionsPanel" style="display:none;">
+      <div class="chat-sessions-panel" id="chatSessionsPanel" style="display:none;" role="region" aria-label="历史会话面板">
         <div class="chat-sessions-header">
           <span>历史会话</span>
-          <button class="chat-sessions-close" onclick="toggleSessionsPanel()">✕</button>
+          <button class="chat-sessions-close" onclick="toggleSessionsPanel()" aria-label="关闭会话面板">✕</button>
         </div>
         <div class="chat-sessions-list" id="chatSessionsList">
           <p style="padding:16px;color:var(--text-tertiary);font-size:13px;">加载中...</p>
         </div>
       </div>
-      <div class="chat-area" id="chatArea">
+      <div class="chat-area" id="chatArea" role="log" aria-live="polite" aria-label="对话消息区域">
         <div class="chat-inner">
           <div class="empty-state" id="emptyState">
-            <div class="icon">💡</div>
+            <div class="icon" aria-hidden="true">💡</div>
             <h2>证券清算知识问答助手</h2>
             <p>我可以帮助您查找证券清算规则、技术文档、业务流程等信息。请先导入文档到知识库，或尝试以下示例问题：</p>
-            <div class="suggestions">
-              <button class="suggestion-btn" data-q="沪深交易所 T+1 清算流程是什么？">沪深交易所 T+1 清算流程是什么？</button>
-              <button class="suggestion-btn" data-q="银行间债券市场清算方式有哪些？">银行间债券市场清算方式有哪些？</button>
-              <button class="suggestion-btn" data-q="CSDC 在清算中的职责是什么？">CSDC 在清算中的职责是什么？</button>
-              <button class="suggestion-btn" data-q="证券交易的结算周期有哪些类型？">证券交易的结算周期有哪些类型？</button>
+            <div class="suggestions" role="list">
+              <button class="suggestion-btn" data-q="沪深交易所 T+1 清算流程是什么？" role="listitem">沪深交易所 T+1 清算流程是什么？</button>
+              <button class="suggestion-btn" data-q="银行间债券市场清算方式有哪些？" role="listitem">银行间债券市场清算方式有哪些？</button>
+              <button class="suggestion-btn" data-q="CSDC 在清算中的职责是什么？" role="listitem">CSDC 在清算中的职责是什么？</button>
+              <button class="suggestion-btn" data-q="证券交易的结算周期有哪些类型？" role="listitem">证券交易的结算周期有哪些类型？</button>
             </div>
           </div>
-          <div id="messagesContainer"></div>
+          <div id="messagesContainer" aria-label="消息列表"></div>
         </div>
       </div>
       <div class="input-area">
         <div class="input-inner">
           <div class="input-wrapper">
-            <textarea id="questionInput" placeholder="输入问题..." rows="1" autofocus></textarea>
+            <textarea id="questionInput" placeholder="输入问题..." rows="1" autofocus aria-label="输入问题"></textarea>
           </div>
-          <button class="send-btn" id="sendBtn" aria-label="发送">➤</button>
+          <button class="send-btn" id="sendBtn" aria-label="发送问题">➤</button>
         </div>
       </div>
     </div>
@@ -1101,11 +959,11 @@ body {
           <h2>📤 导入文档到知识库</h2>
 
           <!-- 文件上传区 -->
-          <div class="upload-zone" id="uploadZone">
-            <div class="icon">📁</div>
+          <div class="upload-zone" id="uploadZone" role="button" tabindex="0" aria-label="点击或拖拽文件到此处上传">
+            <div class="icon" aria-hidden="true">📁</div>
             <p><strong>点击选择文件</strong> 或将文件拖拽到此处</p>
             <p class="hint">支持 PDF、DOCX、DOC、XLSX、XLS、MD、HTML、TXT、JPG、PNG 格式</p>
-            <input type="file" id="fileInput" multiple accept=".pdf,.docx,.doc,.xlsx,.xls,.md,.html,.htm,.txt,.jpg,.jpeg,.png">
+            <input type="file" id="fileInput" multiple accept=".pdf,.docx,.doc,.xlsx,.xls,.md,.html,.htm,.txt,.jpg,.jpeg,.png" aria-label="选择文件">
           </div>
 
           <!-- 已选文件列表 -->
@@ -1157,12 +1015,12 @@ body {
           </div>
 
           <div style="display:flex;gap:8px;margin-top:8px;">
-            <button class="btn btn-primary" id="uploadBtn" disabled>📤 开始导入</button>
-            <button class="btn btn-default" id="clearFilesBtn">🗑️ 清空文件列表</button>
+            <button class="btn btn-primary" id="uploadBtn" disabled aria-label="开始导入文件到知识库">📤 开始导入</button>
+            <button class="btn btn-default" id="clearFilesBtn" aria-label="清空已选文件列表">🗑️ 清空文件列表</button>
           </div>
 
           <!-- 进度和结果 -->
-          <div id="uploadProgress" style="display:none;margin-top:16px;">
+          <div id="uploadProgress" style="display:none;margin-top:16px;" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
             <div class="progress-bar"><div class="fill" id="progressFill"></div></div>
             <p style="font-size:13px;color:var(--text-secondary);" id="progressText">准备中...</p>
           </div>
@@ -1177,12 +1035,12 @@ body {
         <div class="page-inner">
           <h2>🔍 知识库检索</h2>
           <div class="search-box">
-            <input class="form-input" id="searchInput" placeholder="输入关键词搜索知识库文档（如 T+1 清算、CSDC）">
-            <button class="btn btn-primary" id="searchBtn">🔍 搜索</button>
+            <input class="form-input" id="searchInput" placeholder="输入关键词搜索知识库文档（如 T+1 清算、CSDC）" aria-label="搜索关键词">
+            <button class="btn btn-primary" id="searchBtn" aria-label="搜索知识库">🔍 搜索</button>
           </div>
-          <div id="searchResults">
+          <div id="searchResults" role="region" aria-live="polite" aria-label="搜索结果">
             <div class="search-empty">
-              <div class="icon">🔎</div>
+              <div class="icon" aria-hidden="true">🔎</div>
               <p>输入关键词搜索知识库中的文档</p>
             </div>
           </div>
@@ -1195,6 +1053,7 @@ body {
       <div class="page-scroll">
         <div class="page-inner">
           <h2>📊 知识库状态</h2>
+          <div style="margin-bottom:12px"><button class="btn btn-primary" onclick="loadKbStatus()">🔄 刷新</button></div>
           <div class="kb-stats" id="kbStats">
             <div class="stat-card"><div class="value" id="statDocs">-</div><div class="label">文档数量</div></div>
             <div class="stat-card"><div class="value" id="statChunks">-</div><div class="label">文档片段</div></div>
@@ -1264,11 +1123,11 @@ body {
 </div>
 
 <!-- ====== About Modal ====== -->
-<div class="modal-overlay" id="aboutModal">
+<div class="modal-overlay" id="aboutModal" role="dialog" aria-modal="true" aria-labelledby="aboutModalTitle">
   <div class="modal">
     <div class="modal-header">
-      <h2>ℹ️ 关于</h2>
-      <button class="modal-close" onclick="this.closest('.modal-overlay').classList.remove('open')">✕</button>
+      <h2 id="aboutModalTitle">ℹ️ 关于</h2>
+      <button class="modal-close" onclick="this.closest('.modal-overlay').classList.remove('open')" aria-label="关闭对话框">✕</button>
     </div>
     <div class="modal-body">
       <p><strong>证券清算知识问答系统</strong></p>
@@ -1321,6 +1180,7 @@ const API_BASE = _urlBase || _localBase || (location.protocol === 'file:' ? _def
 if (_urlBase) localStorage.setItem('qa_api_base', API_BASE);
 
 async function apiAsk(question) {
+  // ponytail: 保留供非流式调用（如未来批量评测），当前仅 apiAskStream 使用
   const resp = await fetch(`${API_BASE}/qa/ask`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -1424,7 +1284,13 @@ async function apiSearchKB(query) {
 /* ═══════════════════════════════════════════════════
    Chat Logic
    ═══════════════════════════════════════════════════ */
-function scrollToBottom() { requestAnimationFrame(() => { chatArea.scrollTop = chatArea.scrollHeight; }); }
+// 节流 scrollToBottom：流式输出时高频调用，限制到 rAF 频率
+let _scrollPending = false;
+function scrollToBottom() {
+  if (_scrollPending) return;
+  _scrollPending = true;
+  requestAnimationFrame(() => { chatArea.scrollTop = chatArea.scrollHeight; _scrollPending = false; });
+}
 function formatTime() { return new Date().toLocaleTimeString('zh-CN', { hour:'2-digit', minute:'2-digit' }); }
 
 function addMessage(role, content, sources) {
@@ -1498,13 +1364,16 @@ function renderFaithfulnessBadge(faithfulness) {
 
 // ── 来源卡片渲染（renderMessage 与 finalizeMessage 共享，避免两套样式） ──
 function renderSourceItem(s, i) {
+  const content = s.content || '';
+  const preview = escHtml(content.substring(0, 200));
+  const rest = content.length > 200 ? `<br><button class="source-expand-btn" onclick="event.stopPropagation();this.nextElementSibling.style.display='block';this.style.display='none'">展开全文</button><div class="full-text" style="display:none">${escHtml(content.substring(200))}</div>` : '';
   return `
       <div class="source-item" onclick="this.classList.toggle('expanded')">
         <span class="source-badge">${i+1}</span>
         ${getFileIcon(s.file_name)}
         <span class="source-title">${escHtml(s.file_name||'unknown')}</span>
         <span class="source-score">${renderScoreStars(s.score)}</span>
-        <div class="source-content">${escHtml((s.content||'').substring(0,200))}${(s.content||'').length > 200 ? '<br><button onclick="event.stopPropagation();this.parentElement.querySelector(\'.full-text\').style.display=\'block\';this.style.display=\'none\'">展开全文</button><div class="full-text" style="display:none">'+escHtml(s.content.substring(200))+'</div>' : ''}</div>
+        <div class="source-content">${preview}${rest}</div>
       </div>`;
 }
 
@@ -1512,7 +1381,7 @@ function renderSourcesSection(sources) {
   if (!sources || sources.length === 0) return '';
   const items = sources.map((s,i) => renderSourceItem(s, i)).join('');
   return `<div class="sources-section">
-    <div class="sources-toggle" onclick="toggleSources(this)">📚 <span>${sources.length} 个引用来源</span><span style="font-size:10px;margin-left:4px;">▼</span></div>
+    <div class="sources-toggle" data-action="toggle-sources">📚 <span>${sources.length} 个引用来源</span><span class="sources-arrow" style="font-size:10px;margin-left:4px;">▼</span></div>
     <div class="sources-list" style="display:none">${items}</div>
   </div>`;
 }
@@ -1542,7 +1411,7 @@ function showEmptyState() { if (state.messages.length === 0) emptyState.style.di
 
 function renderMessageActions(msg) {
   return `<div class="message-actions" data-msg-id="${msg.id}">
-    <button class="action-btn add-to-standard" onclick="addToStandardAnswer('${msg.id}')" title="将此问答加入标准答案库">
+    <button class="action-btn add-to-standard" data-action="add-to-standard" data-msg-id="${msg.id}" title="将此问答加入标准答案库">
       <span>📋</span> 加入标准答案
     </button>
   </div>`;
@@ -1609,12 +1478,13 @@ async function addToStandardAnswer(msgId) {
 
 function toggleSources(btn) {
   const list = btn.nextElementSibling;
-  const arrow = btn.querySelector('span:last-child');
-  if (list.style.display === 'none') { list.style.display = 'block'; arrow.textContent = '▲'; }
-  else { list.style.display = 'none'; arrow.textContent = '▼'; }
+  const arrow = btn.querySelector('.sources-arrow');
+  if (list.style.display === 'none') { list.style.display = 'block'; if (arrow) arrow.textContent = '▲'; }
+  else { list.style.display = 'none'; if (arrow) arrow.textContent = '▼'; }
 }
 
 function appendStreamingContent(msgId, text) {
+  // ponytail: 保留供未来增量更新优化，当前使用 updateStreamingContent
   const el = document.querySelector(`#msg-${msgId} .message-body`);
   if (el) el.innerHTML = renderMarkdown(text);
   scrollToBottom();
@@ -1624,13 +1494,13 @@ function showStatus(type, text) {
   const div = document.createElement('div');
   div.className = `status-msg ${type}`; div.id = 'statusIndicator';
   div.innerHTML = type === 'searching' || type === 'generating'
-    ? `<div class="spinner"></div><span>${text}</span>`
-    : `<span>${text}</span>`;
+    ? `<div class="spinner"></div><span>${escHtml(text)}</span>`
+    : `<span>${escHtml(text)}</span>`;
   messagesContainer.appendChild(div); scrollToBottom();
 }
 function hideStatus() { const el = document.getElementById('statusIndicator'); if(el) el.remove(); }
 
-function showError(code, message, retryFn) {
+function showError(code, message) {
   const icons = { EMPTY_INDEX:'📭', LLM_UNAVAILABLE:'🔴', API_TIMEOUT:'⏰', default:'⚠️' };
   const div = document.createElement('div');
   div.className = 'error-msg error';
@@ -1726,7 +1596,7 @@ async function submitQuestion(question) {
     saveToHistory(question, fullAnswer, finalSources);
     setStatus('online', '就绪');
   } catch (err) {
-    finalizeMessageContent(placeholderMsg.id, '请求失败: ' + err.message, []);
+    finalizeMessage(placeholderMsg.id, '请求失败: ' + err.message, [], null);
     showError(null, '请求失败: ' + err.message + '。请确认后端服务已启动。');
     setStatus('offline', '离线');
   }
@@ -1798,10 +1668,10 @@ function renderSessionsList() {
     return;
   }
   list.innerHTML = state.sessions.map(s => `
-    <div class="chat-session-item ${s.id === state.sessionId ? 'active' : ''}" onclick="switchSession('${s.id}')">
+    <div class="chat-session-item ${s.id === state.sessionId ? 'active' : ''}" data-action="switch-session" data-session-id="${escHtml(s.id)}">
       <span class="session-title">${escHtml(s.title || '(新会话)')}</span>
       <span class="session-time">${s.turns || 0}轮</span>
-      <button class="session-delete" onclick="event.stopPropagation();deleteSession('${s.id}')" title="删除">🗑️</button>
+      <button class="session-delete" data-action="delete-session" data-session-id="${escHtml(s.id)}" title="删除" aria-label="删除会话">🗑️</button>
     </div>
   `).join('');
 }
@@ -1842,62 +1712,117 @@ function deleteSession(sessionId) {
     .catch(err => alert('删除失败: ' + err.message));
 }
 
-/* ── Chat input ── */
-questionInput.addEventListener('keydown', e => {
-  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); const q=questionInput.value; if(q.trim()) submitQuestion(q); questionInput.value=''; autoResize(questionInput); }
+// 事件委托：消息区域内的动态按钮
+messagesContainer.addEventListener('click', (e) => {
+  const actionBtn = e.target.closest('[data-action]');
+  if (!actionBtn) return;
+
+  const action = actionBtn.dataset.action;
+  const msgId = actionBtn.dataset.msgId;
+
+  if (action === 'add-to-standard' && msgId) {
+    addToStandardAnswer(msgId);
+  } else if (action === 'toggle-sources') {
+    toggleSources(actionBtn);
+  }
 });
-sendBtn.addEventListener('click', () => { const q=questionInput.value; if(q.trim()&&!state.isProcessing){submitQuestion(q);questionInput.value='';autoResize(questionInput);} });
-function autoResize(el) { el.style.height='auto'; el.style.height=Math.min(el.scrollHeight,120)+'px'; }
-questionInput.addEventListener('input', function(){autoResize(this);});
-document.querySelectorAll('.suggestion-btn').forEach(b=>{b.addEventListener('click',()=>{const q=b.dataset.q;if(q&&!state.isProcessing)submitQuestion(q);});});
+
+/* ── Chat input ── */
+/**
+ * 自动调整输入框高度：根据内容动态调整，最大 120px
+ */
+function autoResize(el) {
+  el.style.height = 'auto';
+  el.style.height = Math.min(el.scrollHeight, 120) + 'px';
+}
+
+/**
+ * 处理问题提交：从输入框获取内容并发送
+ */
+function handleQuestionSubmit() {
+  const q = questionInput.value.trim();
+  if (q && !state.isProcessing) {
+    submitQuestion(q);
+    questionInput.value = '';
+    autoResize(questionInput);
+  }
+}
+
+// 输入框事件监听
+questionInput.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    handleQuestionSubmit();
+  }
+});
+
+questionInput.addEventListener('input', function() {
+  autoResize(this);
+});
+
+sendBtn.addEventListener('click', handleQuestionSubmit);
+
+// 建议问题点击事件
+document.querySelectorAll('.suggestion-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const q = btn.dataset.q;
+    if (q && !state.isProcessing) {
+      submitQuestion(q);
+    }
+  });
+});
 
 /* ═══════════════════════════════════════════════════
    Navigation & Pages
    ═══════════════════════════════════════════════════ */
+/**
+ * 页面切换处理：更新导航状态、页面可见性、顶栏标题
+ */
+function switchPage(page) {
+  // 更新导航高亮
+  document.querySelectorAll('.nav-item[data-page]').forEach(n => {
+    n.classList.toggle('active', n.dataset.page === page);
+    n.setAttribute('aria-current', n.dataset.page === page ? 'page' : 'false');
+  });
+  // 切换页面可见性
+  document.querySelectorAll('.page-content').forEach(p => p.classList.remove('active'));
+
+  const titles = {
+    chat: '💬 问答', history: '🕐 历史记录',
+    'import': '⚙️ 导入文档', 'search-kb': '⚙️ 知识库检索', 'kb-status': '⚙️ 知识库状态',
+    'standards': '📋 标准答案', 'reviews': '✅ 审核队列',
+  };
+  topbarTitle.textContent = titles[page] || '问答';
+
+  const pageElements = {
+    chat: { el: $('pageChat'), subtitle: '', onLoad: () => setTimeout(() => questionInput.focus(), 100) },
+    history: { el: $('pageHistory'), subtitle: '' },
+    'import': { el: $('pageImport'), subtitle: '后台管理' },
+    'search-kb': { el: $('pageSearchKB'), subtitle: '后台管理', onLoad: () => $('searchInput').focus() },
+    'kb-status': { el: $('pageKbStatus'), subtitle: '后台管理', onLoad: loadKbStatus },
+    'standards': { el: $('pageStandards'), subtitle: '后台管理', onLoad: loadStandards },
+    'reviews': { el: $('pageReviews'), subtitle: '后台管理', onLoad: loadReviews },
+  };
+
+  const pageInfo = pageElements[page] || pageElements.chat;
+  pageInfo.el.classList.add('active');
+  document.querySelector('.topbar-subtitle').textContent = pageInfo.subtitle;
+  if (pageInfo.onLoad) pageInfo.onLoad();
+
+  // 关闭移动端侧边栏
+  $('sidebar').classList.remove('open');
+  $('sidebarOverlay').classList.remove('open');
+}
+
+// 事件委托：导航项点击
 document.querySelectorAll('.nav-item[data-page]').forEach(item => {
-  item.addEventListener('click', () => {
-    document.querySelectorAll('.nav-item[data-page]').forEach(n => n.classList.remove('active'));
-    item.classList.add('active');
-    const page = item.dataset.page;
-    document.querySelectorAll('.page-content').forEach(p => p.classList.remove('active'));
-
-    const titles = {
-      chat: '💬 问答', history: '🕐 历史记录',
-      'import': '⚙️ 导入文档', 'search-kb': '⚙️ 知识库检索', 'kb-status': '⚙️ 知识库状态',
-      'standards': '📋 标准答案', 'reviews': '✅ 审核队列',
-    };
-    topbarTitle.textContent = titles[page] || '问答';
-
-    if (page === 'chat') {
-      $('pageChat').classList.add('active');
-      document.querySelector('.topbar-subtitle').textContent = '';
-      setTimeout(() => questionInput.focus(), 100);
-    } else if (page === 'history') {
-      $('pageHistory').classList.add('active');
-      document.querySelector('.topbar-subtitle').textContent = '';
-    } else if (page === 'import') {
-      $('pageImport').classList.add('active');
-      document.querySelector('.topbar-subtitle').textContent = '后台管理';
-    } else if (page === 'search-kb') {
-      $('pageSearchKB').classList.add('active');
-      document.querySelector('.topbar-subtitle').textContent = '后台管理';
-      $('searchInput').focus();
-    } else if (page === 'kb-status') {
-      $('pageKbStatus').classList.add('active');
-      document.querySelector('.topbar-subtitle').textContent = '后台管理';
-      loadKbStatus();
-    } else if (page === 'standards') {
-      $('pageStandards').classList.add('active');
-      document.querySelector('.topbar-subtitle').textContent = '后台管理';
-      loadStandards();
-    } else if (page === 'reviews') {
-      $('pageReviews').classList.add('active');
-      document.querySelector('.topbar-subtitle').textContent = '后台管理';
-      loadReviews();
+  item.addEventListener('click', () => switchPage(item.dataset.page));
+  // 键盘可访问性：Enter/Space 触发
+  item.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      switchPage(item.dataset.page);
     }
-
-    $('sidebar').classList.remove('open');
-    $('sidebarOverlay').classList.remove('open');
   });
 });
 
@@ -1915,6 +1840,13 @@ const clearFilesBtn = $('clearFilesBtn');
 
 /* File selection */
 uploadZone.addEventListener('click', () => fileInput.click());
+// 键盘可访问性：Enter/Space 触发文件选择
+uploadZone.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' || e.key === ' ') {
+    e.preventDefault();
+    fileInput.click();
+  }
+});
 uploadZone.addEventListener('dragover', e => { e.preventDefault(); uploadZone.classList.add('dragover'); });
 uploadZone.addEventListener('dragleave', () => uploadZone.classList.remove('dragover'));
 uploadZone.addEventListener('drop', e => { e.preventDefault(); uploadZone.classList.remove('dragover'); addFiles(e.dataTransfer.files); });
@@ -1981,6 +1913,7 @@ uploadBtn.addEventListener('click', async () => {
   // Show progress
   $('uploadProgress').style.display = 'block';
   $('progressFill').style.width = '10%';
+  $('uploadProgress').setAttribute('aria-valuenow', '10');
   $('progressText').textContent = `正在上传 ${state.pendingFiles.length} 个文件...`;
   uploadBtn.disabled = true;
   clearFilesBtn.disabled = true;
@@ -1988,11 +1921,13 @@ uploadBtn.addEventListener('click', async () => {
   try {
     const files = state.pendingFiles.map(f => f.file);
     $('progressFill').style.width = '30%';
+    $('uploadProgress').setAttribute('aria-valuenow', '30');
     $('progressText').textContent = '正在导入到知识库...';
 
     const result = await apiUpload(files, meta);
 
     $('progressFill').style.width = '100%';
+    $('uploadProgress').setAttribute('aria-valuenow', '100');
     $('progressText').textContent = '导入完成！';
 
     const fileCount = result.files_count || result.documents_written || 0;
@@ -2036,7 +1971,6 @@ function showUploadResult(type, message) {
 const searchInput = $('searchInput');
 const searchBtn = $('searchBtn');
 const searchResults = $('searchResults');
-let searchTimer = null;
 
 searchBtn.addEventListener('click', doSearch);
 searchInput.addEventListener('keydown', e => { if (e.key === 'Enter') doSearch(); });
@@ -2128,8 +2062,8 @@ async function loadStandards() {
     data.items.forEach((a,i) => {
       const statusTag = a.status==='enabled'?'<span style="color:green">启用</span>':a.status==='disabled'?'<span style="color:#999">禁用</span>':'<span style="color:#b8860b">候选</span>';
       html += `<tr><td>${i+1}</td><td title="${escHtml(a.question)}">${escHtml(a.question).substring(0,40)}..</td><td>${escHtml(a.category||'-')}</td><td>${statusTag}</td><td>${(a.aliases||[]).length}</td>`;
-      html += `<td><button class="btn-sm" onclick="toggleStdStatus('${a.id}','${a.status}')">${a.status==='enabled'?'禁用':'启用'}</button> `;
-      html += `<button class="btn-sm" onclick="deleteStd('${a.id}')">删除</button></td></tr>`;
+      html += `<td><button class="btn-sm" data-action="toggle-std-status" data-id="${escHtml(a.id)}" data-status="${escHtml(a.status)}">${a.status==='enabled'?'禁用':'启用'}</button> `;
+      html += `<button class="btn-sm" data-action="delete-std" data-id="${escHtml(a.id)}">删除</button></td></tr>`;
     });
     html += '</tbody></table>';
     $('stdTableContainer').innerHTML = html;
@@ -2200,9 +2134,9 @@ async function loadReviews() {
       html += `<tr><td>${i+1}</td><td title="${escHtml(item.question)}">${escHtml(item.question).substring(0,40)}..</td><td>${evalTag}</td><td>${priTag}</td><td>${statusTag}</td><td>${labelTag}</td>`;
       if (item.status === 'pending') {
         html += `<td>
-          <button class="btn-sm" style="background:green;color:white" onclick="labelReview('${item.id}','correct')">正确</button>
-          <button class="btn-sm" style="background:#b8860b;color:white" onclick="labelReview('${item.id}','partial')">部分</button>
-          <button class="btn-sm" style="background:red;color:white" onclick="labelReview('${item.id}','incorrect')">错误</button>
+          <button class="btn-sm" style="background:green;color:white" data-action="label-review" data-id="${escHtml(item.id)}" data-label="correct">正确</button>
+          <button class="btn-sm" style="background:#b8860b;color:white" data-action="label-review" data-id="${escHtml(item.id)}" data-label="partial">部分</button>
+          <button class="btn-sm" style="background:red;color:white" data-action="label-review" data-id="${escHtml(item.id)}" data-label="incorrect">错误</button>
         </td>`;
       } else {
         html += '<td>-</td>';
@@ -2238,8 +2172,8 @@ async function loadServerSessions() {
       html += `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px;background:#f8f9fb;border-radius:8px">
         <div><strong>${escHtml(s.title||'(无标题)')}</strong><br>
         <span style="font-size:12px;color:var(--text-tertiary)">${s.turns} 轮 · ${(s.updated_at||'').slice(0,10)}</span></div>
-        <div><button class="btn-sm" onclick="location.href='?session=${s.id}'">▶ 恢复</button>
-        <button class="btn-sm" style="background:red;color:white" onclick="deleteServerSession('${s.id}')">🗑</button></div>
+        <div><button class="btn-sm" data-action="restore-session" data-session-id="${escHtml(s.id)}">▶ 恢复</button>
+        <button class="btn-sm" style="background:red;color:white" data-action="delete-server-session" data-session-id="${escHtml(s.id)}">🗑</button></div>
       </div>`;
     });
     html += '</div>';
@@ -2268,6 +2202,50 @@ function renderHistory() {
   `).join('');
 }
 function switchToChat() { document.querySelector('[data-page="chat"]').click(); }
+
+/* ═══════════════════════════════════════════════════
+   Global Event Delegation
+   ═══════════════════════════════════════════════════ */
+// Handle all data-action buttons globally
+document.addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-action]');
+  if (!btn) return;
+
+  const action = btn.dataset.action;
+
+  // Session management
+  if (action === 'switch-session') {
+    const sessionId = btn.dataset.sessionId;
+    if (sessionId) switchSession(sessionId);
+  } else if (action === 'delete-session') {
+    e.stopPropagation();
+    const sessionId = btn.dataset.sessionId;
+    if (sessionId) deleteSession(sessionId);
+  } else if (action === 'restore-session') {
+    const sessionId = btn.dataset.sessionId;
+    if (sessionId) location.href = `?session=${encodeURIComponent(sessionId)}`;
+  } else if (action === 'delete-server-session') {
+    const sessionId = btn.dataset.sessionId;
+    if (sessionId) deleteServerSession(sessionId);
+  }
+
+  // Standards management
+  else if (action === 'toggle-std-status') {
+    const id = btn.dataset.id;
+    const status = btn.dataset.status;
+    if (id && status) toggleStdStatus(id, status);
+  } else if (action === 'delete-std') {
+    const id = btn.dataset.id;
+    if (id) deleteStd(id);
+  }
+
+  // Reviews management
+  else if (action === 'label-review') {
+    const id = btn.dataset.id;
+    const label = btn.dataset.label;
+    if (id && label) labelReview(id, label);
+  }
+});
 
 /* ═══════════════════════════════════════════════════
    Utility
