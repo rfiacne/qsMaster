@@ -38,6 +38,7 @@ answer_app = typer.Typer(
 def _get_store() -> StandardAnswerStore:
     """获取标准答案库存储实例"""
     from qa.config.settings import get_settings
+
     settings = get_settings()
     store = StandardAnswerStore(store_path=settings.early_exit.store_path)
     store.load()
@@ -47,6 +48,7 @@ def _get_store() -> StandardAnswerStore:
 def _get_matcher() -> EarlyExitMatcher:
     """获取 EarlyExitMatcher 实例（重建索引用）"""
     from qa.config.settings import get_settings
+
     settings = get_settings()
     return EarlyExitMatcher(
         store_path=settings.early_exit.store_path,
@@ -63,11 +65,15 @@ def add(
     tags: str = typer.Option("", "--tags", "-t", help="逗号分隔的标签列表"),
     source: str = typer.Option("manual", "--source", "-s", help="录入来源"),
     match_strategy: str = typer.Option(
-        "both", "--match", "-m",
+        "both",
+        "--match",
+        "-m",
         help="匹配策略: exact | fuzzy | both",
     ),
     force: bool = typer.Option(
-        False, "--force", "-f",
+        False,
+        "--force",
+        "-f",
         help="覆盖已有（相同 ID 的问题）",
     ),
 ):
@@ -88,9 +94,7 @@ def add(
     # 检查是否已存在相同问题
     existing = store.get_by_question(question)
     if existing and not force:
-        console.print(
-            f"[yellow]标准答案已存在 (id: {existing.id[:12]}...)[/yellow]"
-        )
+        console.print(f"[yellow]标准答案已存在 (id: {existing.id[:12]}...)[/yellow]")
         console.print(f"  问题: {existing.question[:50]}")
         console.print(f"  答案: {existing.answer[:80]}...")
         console.print("  使用 --force 覆盖")
@@ -110,18 +114,12 @@ def add(
 
 @answer_app.command(name="list")
 def list_answers(
-    category: str | None = typer.Option(
-        None, "--category", "-c", help="按类别筛选"
-    ),
-    keyword: str | None = typer.Option(
-        None, "--keyword", "-k", help="关键词搜索"
-    ),
+    category: str | None = typer.Option(None, "--category", "-c", help="按类别筛选"),
+    keyword: str | None = typer.Option(None, "--keyword", "-k", help="关键词搜索"),
     status: str | None = typer.Option(
         None, "--status", "-s", help="按状态筛选 (enabled/disabled/candidate)"
     ),
-    format: str = typer.Option(
-        "text", "--format", "-f", help="输出格式: text | json"
-    ),
+    format: str = typer.Option("text", "--format", "-f", help="输出格式: text | json"),
 ):
     """列出标准答案库"""
     store = _get_store()
@@ -195,12 +193,8 @@ def remove(
 @answer_app.command(name="import")
 def import_(
     path: str = typer.Argument(..., help="JSON 文件路径"),
-    source: str = typer.Option(
-        "import", "--source", "-s", help="导入来源标记"
-    ),
-    force: bool = typer.Option(
-        False, "--force", "-f", help="覆盖已有条目"
-    ),
+    source: str = typer.Option("import", "--source", "-s", help="导入来源标记"),
+    force: bool = typer.Option(False, "--force", "-f", help="覆盖已有条目"),
 ):
     """从 JSON 文件批量导入标准答案"""
     file_path = Path(path)
@@ -244,8 +238,7 @@ def import_(
         matcher.rebuild_index()
 
     console.print(
-        f"[green]✓[/green] 导入完成: "
-        f"新增 {added}, 覆盖 {overwritten}, 错误 {len(errors)}"
+        f"[green]✓[/green] 导入完成: 新增 {added}, 覆盖 {overwritten}, 错误 {len(errors)}"
     )
     for err in errors:
         console.print(f"  [red]⚠ {err}[/red]")
@@ -253,12 +246,8 @@ def import_(
 
 @answer_app.command()
 def export(
-    output: str | None = typer.Option(
-        None, "--output", "-o", help="输出文件路径（默认 stdout）"
-    ),
-    category: str | None = typer.Option(
-        None, "--category", "-c", help="按类别导出"
-    ),
+    output: str | None = typer.Option(None, "--output", "-o", help="输出文件路径（默认 stdout）"),
+    category: str | None = typer.Option(None, "--category", "-c", help="按类别导出"),
 ):
     """导出标准答案库到 JSON"""
     store = _get_store()
@@ -276,18 +265,14 @@ def export(
         out_path.parent.mkdir(parents=True, exist_ok=True)
         with open(out_path, "w", encoding="utf-8") as f:
             f.write(json_str)
-        console.print(
-            f"[green]✓[/green] 已导出 {len(data)} 条标准答案 → {output}"
-        )
+        console.print(f"[green]✓[/green] 已导出 {len(data)} 条标准答案 → {output}")
     else:
         console.print(json_str)
 
 
 @answer_app.command()
 def seed(
-    force: bool = typer.Option(
-        False, "--force", "-f", help="覆盖已有种子数据"
-    ),
+    force: bool = typer.Option(False, "--force", "-f", help="覆盖已有种子数据"),
 ):
     """加载内置种子数据（62 条证券清算高频问答）
 
@@ -330,8 +315,7 @@ def seed(
         matcher.rebuild_index()
 
     console.print(
-        f"[green]✓[/green] 种子数据加载完成: "
-        f"新增 {added}, 覆盖 {overwritten}, 错误 {len(errors)}"
+        f"[green]✓[/green] 种子数据加载完成: 新增 {added}, 覆盖 {overwritten}, 错误 {len(errors)}"
     )
     for err in errors:
         console.print(f"  [red]⚠ {err}[/red]")
@@ -402,6 +386,7 @@ def list_aliases(
         console.print("[yellow]暂无别名问题[/yellow]")
         return
     from rich.table import Table
+
     table = Table(title=f"别名问题 ({len(a.aliases)} 个)")
     table.add_column("#", style="dim")
     table.add_column("问题", width=60)

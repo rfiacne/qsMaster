@@ -20,30 +20,8 @@ import pytest
 embedder_mock = mock.MagicMock()
 sys.modules["qa.pipelines.components.embedder"] = embedder_mock
 
-# Mock settings
-settings_patcher = mock.patch("qa.config.settings.get_settings")
-mock_settings = settings_patcher.start()
-mock_settings.return_value.llm.api_base_url = "http://test:8000/v1"
-mock_settings.return_value.llm.resolved_api_key = "test-key"
-mock_settings.return_value.llm.model = "test-model"
-mock_settings.return_value.embedding.api_base_url = "http://test:8000/v1"
-mock_settings.return_value.embedding.model = "test-model"
-mock_settings.return_value.embedding.resolved_api_key = "test-key"
-mock_settings.return_value.early_exit.store_path = tempfile.mkdtemp()
-mock_settings.return_value.vector_store.bit_width = 4
-mock_settings.return_value.vector_store.similarity_function = "cosine"
-mock_settings.return_value.vector_store.persist_path = tempfile.mkdtemp()
-# API gateway: no auth, no rate limit for tests
-mock_settings.return_value.server.api_keys = []
-mock_settings.return_value.server.rate_limit_rpm = 0
-mock_settings.return_value.server.allowed_origins = ["*"]
-
-# Also mock get_settings in middleware module (it imports separately)
-middleware_settings_patcher = mock.patch("qa.api.middleware.get_settings")
-mock_middleware_settings = middleware_settings_patcher.start()
-mock_middleware_settings.return_value.server.api_keys = []
-mock_middleware_settings.return_value.server.rate_limit_rpm = 0
-mock_middleware_settings.return_value.server.allowed_origins = ["*"]
+# 注意：本文件的 mock 已由 contract/conftest.py 统一管理。
+# 以下保留仅为向后兼容（直接运行本文件时仍可用）。
 
 # Ensure src in path
 src_path = str(Path(__file__).resolve().parent.parent.parent / "src")

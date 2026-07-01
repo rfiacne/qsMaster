@@ -154,11 +154,14 @@ def approve(
     if not no_convert:
         from qa.config.settings import get_settings
         from qa.pipelines.components.early_exit import StandardAnswerStore
+
         settings = get_settings()
         std_store = StandardAnswerStore(store_path=settings.early_exit.store_path)
     if workflow.label(
-        item_id, "correct",
-        reviewer=reviewer, comment=comment,
+        item_id,
+        "correct",
+        reviewer=reviewer,
+        comment=comment,
         standard_answer_store=std_store,
     ):
         console.print("[green]✓[/green] 已标注为正确")

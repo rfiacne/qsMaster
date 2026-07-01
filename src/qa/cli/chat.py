@@ -22,7 +22,8 @@ from rich.table import Table
 
 from qa.config.settings import get_settings
 from qa.pipelines.components.session_store import SessionStore
-from qa.pipelines.factory import build_query_pipeline, build_store
+from qa.pipelines.factory import build_query_pipeline
+from qa.pipelines.querying import QueryPipeline
 
 console = Console()
 chat_app = typer.Typer(name="chat", help="交互式会话", no_args_is_help=True)
@@ -171,7 +172,6 @@ class ChatSession:
 
 
 from qa.utils import format_bytes
-
 
 WELCOME_TEXT = """
 [bold cyan]证券清算知识问答 — 交互式会话[/bold cyan]

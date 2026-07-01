@@ -29,18 +29,10 @@ def _get_store() -> AuditStore:
 
 @audit_app.command(name="list")
 def list_records(
-    start: str | None = typer.Option(
-        None, "--start", "-s", help="起始时间 (>=)，如 2024-01-01"
-    ),
-    end: str | None = typer.Option(
-        None, "--end", "-e", help="结束时间 (<=)，如 2024-06-30"
-    ),
-    keyword: str | None = typer.Option(
-        None, "--keyword", "-k", help="关键词搜索（问题/回答）"
-    ),
-    session: str | None = typer.Option(
-        None, "--session", help="按会话 ID 筛选"
-    ),
+    start: str | None = typer.Option(None, "--start", "-s", help="起始时间 (>=)，如 2024-01-01"),
+    end: str | None = typer.Option(None, "--end", "-e", help="结束时间 (<=)，如 2024-06-30"),
+    keyword: str | None = typer.Option(None, "--keyword", "-k", help="关键词搜索（问题/回答）"),
+    session: str | None = typer.Option(None, "--session", help="按会话 ID 筛选"),
     page: int = typer.Option(1, "--page", "-p", help="页码"),
     page_size: int = typer.Option(20, "--page-size", "-n", help="每页条数"),
     format: str = typer.Option("text", "--format", "-f", help="输出格式: text | json"),
@@ -48,8 +40,12 @@ def list_records(
     """查询审计日志"""
     store = _get_store()
     records, total = store.query(
-        start=start, end=end, keyword=keyword,
-        session_id=session, page=page, page_size=page_size,
+        start=start,
+        end=end,
+        keyword=keyword,
+        session_id=session,
+        page=page,
+        page_size=page_size,
     )
 
     if not records:

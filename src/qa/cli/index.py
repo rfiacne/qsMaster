@@ -33,12 +33,19 @@ def _collect_files(paths: list[str]) -> list[str]:
     目录会递归扫描支持的文档格式。
     """
     supported = {
-        ".pdf", ".docx", ".doc",
-        ".xlsx", ".xls",
-        ".md", ".markdown",
-        ".html", ".htm",
+        ".pdf",
+        ".docx",
+        ".doc",
+        ".xlsx",
+        ".xls",
+        ".md",
+        ".markdown",
+        ".html",
+        ".htm",
         ".txt",
-        ".jpg", ".jpeg", ".png",
+        ".jpg",
+        ".jpeg",
+        ".png",
     }
     files: list[str] = []
 
@@ -72,12 +79,11 @@ def index(
     tags: str | None = typer.Option(None, "--tags", help="标签列表（逗号分隔，可选）"),
     description: str | None = typer.Option(None, "--description", help="文档摘要（可选）"),
     rebuild: bool = typer.Option(False, "--rebuild", help="全量重建索引"),
-    bit_width: int | None = typer.Option(
-        None, "--bit-width", help="turbovec 量化宽度: 4 或 2"
-    ),
+    bit_width: int | None = typer.Option(None, "--bit-width", help="turbovec 量化宽度: 4 或 2"),
     ocr_backend: str = typer.Option(
-        "auto", "--ocr-backend",
-        help="PDF 解析后端: auto | docling | opendataloader | paddle | none"
+        "auto",
+        "--ocr-backend",
+        help="PDF 解析后端: auto | docling | opendataloader | paddle | none",
     ),
 ):
     """构建或增量更新索引"""
@@ -150,9 +156,7 @@ def index(
         TimeElapsedColumn(),
         console=console,
     ) as progress:
-        task = progress.add_task(
-            f"索引 {len(files)} 个文档...", total=len(files)
-        )
+        task = progress.add_task(f"索引 {len(files)} 个文档...", total=len(files))
 
         # 按 batch_size 分批处理
         batch_size = settings.indexing.batch_size

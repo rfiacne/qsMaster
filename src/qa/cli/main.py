@@ -19,11 +19,13 @@ from qa import __version__
 
 from .answer import answer_app
 from .ask import ask_app
+from .backup import backup_app
 from .chat import chat_app
 from .compare import compare_app
 from .config import config_app
 from .index import index
 from .review import review_app
+from .term import term_app
 
 console = Console()
 
@@ -39,8 +41,10 @@ app.add_typer(config_app, name="config")
 app.add_typer(ask_app, name="ask")
 app.add_typer(chat_app, name="chat")
 app.add_typer(answer_app, name="answer")
+app.add_typer(backup_app, name="backup")
 app.add_typer(compare_app, name="compare")
 app.add_typer(review_app, name="review")
+app.add_typer(term_app, name="term")
 app.command(name="index")(index)
 
 
@@ -60,9 +64,7 @@ def main(
 
 @app.command()
 def status(
-    format: str = typer.Option(
-        "text", "--format", help="输出格式: text | json"
-    ),
+    format: str = typer.Option("text", "--format", help="输出格式: text | json"),
 ):
     """查看知识库状态"""
     from qa.config.settings import get_settings
@@ -79,16 +81,23 @@ def status(
 
     if format == "json":
         import json
-        console.print(json.dumps({
-            "document_count": index_status.document_count,
-            "chunk_count": index_status.chunk_count,
-            "parent_count": index_status.parent_count,
-            "index_size_bytes": index_status.index_size_bytes,
-            "last_updated": index_status.last_updated,
-            "bit_width": index_status.bit_width,
-            "dim": index_status.dim,
-            "persist_path": index_status.persist_path,
-        }, ensure_ascii=False, indent=2))
+
+        console.print(
+            json.dumps(
+                {
+                    "document_count": index_status.document_count,
+                    "chunk_count": index_status.chunk_count,
+                    "parent_count": index_status.parent_count,
+                    "index_size_bytes": index_status.index_size_bytes,
+                    "last_updated": index_status.last_updated,
+                    "bit_width": index_status.bit_width,
+                    "dim": index_status.dim,
+                    "persist_path": index_status.persist_path,
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
     else:
         from rich.table import Table
 
@@ -127,6 +136,8 @@ def remove(
     )
 
     if all:
+        if not typer.confirm("确认清空整个索引？此操作不可恢复"):
+            raise typer.Abort()
         count = store.delete_all()
         console.print(f"[green]✓[/green] 已清空索引（删除 {count} 条记录）")
         return
@@ -134,18 +145,14 @@ def remove(
     if source:
         filters = {
             "operator": "AND",
-            "conditions": [
-                {"field": "meta.source", "operator": "==", "value": source}
-            ],
+            "conditions": [{"field": "meta.source", "operator": "==", "value": source}],
         }
         count = store.delete_by_filter(filters)
         console.print(f"[green]✓[/green] 已删除来源 '{source}' 的 {count} 条记录")
     elif category:
         filters = {
             "operator": "AND",
-            "conditions": [
-                {"field": "meta.category", "operator": "==", "value": category}
-            ],
+            "conditions": [{"field": "meta.category", "operator": "==", "value": category}],
         }
         count = store.delete_by_filter(filters)
         console.print(f"[green]✓[/green] 已删除类别 '{category}' 的 {count} 条记录")
