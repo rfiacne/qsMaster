@@ -30,6 +30,7 @@ class AuditRecord:
 
     不可删除、不可篡改，仅可追加。
     """
+
     id: str = ""  # 唯一标识（由 timestamp + question[:20] 哈希生成）
     timestamp: str = ""
     session_id: str = ""
@@ -73,21 +74,65 @@ class AuditStore:
     JSONL 格式（每行一条 JSON），仅追加写入。
     不支持删除或修改——满足监管"不可篡改"要求。
 
+    支持自动轮转：超过 max_bytes 时归档当前文件并新建。
+
     存储路径: data/audit/audit.log
     """
 
-    def __init__(self, store_path: str = "./data/audit"):
+    def __init__(
+        self,
+        store_path: str = "./data/audit",
+        max_bytes: int = 100 * 1024 * 1024,  # 100MB
+        backup_count: int = 5,
+    ):
         self.store_path = Path(store_path)
         self.log_file = self.store_path / "audit.log"
+        self.max_bytes = max_bytes
+        self.backup_count = backup_count
         self._lock = threading.Lock()
         self._ensure_dir()
 
     def _ensure_dir(self) -> None:
         self.store_path.mkdir(parents=True, exist_ok=True)
 
+    def _rotate_if_needed(self) -> None:
+        """检查日志文件大小，超限时轮转
+
+        轮转策略（与 RotatingFileHandler 兼容）:
+            audit.log → audit.1.log
+            audit.1.log → audit.2.log
+            ...
+            audit.{backup_count-1}.log → audit.{backup_count}.log（丢弃最旧）
+        """
+        if not self.log_file.exists():
+            return
+        try:
+            size = self.log_file.stat().st_size
+        except OSError:
+            return
+        if size < self.max_bytes:
+            return
+
+        for i in range(self.backup_count - 1, 0, -1):
+            src = self.log_file.with_suffix(f".{i}.log")
+            dst = self.log_file.with_suffix(f".{i + 1}.log")
+            if src.exists():
+                dst.unlink(missing_ok=True)
+                src.rename(dst)
+
+        first_backup = self.log_file.with_suffix(".1.log")
+        first_backup.unlink(missing_ok=True)
+        self.log_file.rename(first_backup)
+
+        logger.info(
+            f"审计日志轮转: {self.log_file} → {first_backup.name} "
+            f"(size={size / 1024 / 1024:.1f}MB, max={self.max_bytes / 1024 / 1024:.0f}MB)"
+        )
+
     def append(self, record: AuditRecord) -> None:
         """追加一条审计记录（线程安全，追加写入）"""
         import hashlib
+
         if not record.timestamp:
             record.timestamp = time.strftime("%Y-%m-%dT%H:%M:%S")
         if not record.id:
@@ -96,6 +141,7 @@ class AuditStore:
 
         line = record.to_jsonl()
         with self._lock:
+            self._rotate_if_needed()
             with open(self.log_file, "a", encoding="utf-8") as f:
                 f.write(line + "\n")
 
@@ -125,6 +171,7 @@ class AuditStore:
         has_filters = start or end or keyword or session_id
         if not has_filters and page == 1:
             records = self._iter_lines(from_tail=True, limit=page_size)
+            total = self._count_lines()
         else:
             # 慢路径：全量加载后过滤
             all_records = self._read_all()
@@ -142,10 +189,11 @@ class AuditStore:
                         continue
                 filtered.append(r)
             filtered.sort(key=lambda r: r.timestamp, reverse=True)
+            total = len(filtered)
             start_idx = (page - 1) * page_size
-            records = filtered[start_idx:start_idx + page_size]
+            records = filtered[start_idx : start_idx + page_size]
 
-        return records, self._count_lines()
+        return records, total
 
     def _count_lines(self) -> int:
         """高效行数统计（仅数换行符，不解析 JSON）"""
@@ -189,7 +237,7 @@ class AuditStore:
                                 break
         return records
 
-    def _tail_lines(self, f, n: int) -> list[AuditRecord]:
+    def _tail_lines(self, f: Any, n: int) -> list[AuditRecord]:
         """从文件尾部读取最后 N 条有效记录"""
         f.seek(0, 2)  # 到文件末尾
         file_size = f.tell()

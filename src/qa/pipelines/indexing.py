@@ -30,11 +30,11 @@ logger = logging.getLogger(__name__)
 class IndexingResult:
     """索引操作结果"""
 
-    files_count: int = 0           # 实际文件数
-    documents_written: int = 0     # 总写入数 (parents + chunks)
-    documents_skipped: int = 0     # 跳过的文件数
-    chunk_count: int = 0           # 片段数
-    parent_count: int = 0          # 大块数
+    files_count: int = 0  # 实际文件数
+    documents_written: int = 0  # 总写入数 (parents + chunks)
+    documents_skipped: int = 0  # 跳过的文件数
+    chunk_count: int = 0  # 片段数
+    parent_count: int = 0  # 大块数
     total_time_ms: float = 0.0
     errors: list[str] = field(default_factory=list)
 
@@ -123,7 +123,7 @@ class IndexingPipeline:
             result.documents_skipped = len(converted["skipped"])
             for fp, reason in converted["skipped"]:
                 logger.warning(f"跳过 {fp}: {reason}")
-            logger.info(f"[步骤] {step}: 完成 ({time.time()-t_step:.1f}s)")
+            logger.info(f"[步骤] {step}: 完成 ({time.time() - t_step:.1f}s)")
         except Exception as e:
             logger.error(f"[步骤] {step}: 异常: {e}", exc_info=True)
             result.errors.append(f"{step} 失败: {e}")
@@ -197,7 +197,7 @@ class IndexingPipeline:
                     embedded_map = {d.id: d for d in embedded_docs if d.id}
                     parents = [embedded_map.get(d.id, d) for d in parents]
                     chunks = [embedded_map.get(d.id, d) for d in chunks]
-                logger.info(f"[步骤] {step}: 完成 ({time.time()-t_step:.1f}s)")
+                logger.info(f"[步骤] {step}: 完成 ({time.time() - t_step:.1f}s)")
             except Exception as e:
                 logger.error(f"[步骤] {step}: 失败: {e}")
                 result.errors.append(f"{step} 失败: {e}")
@@ -215,7 +215,7 @@ class IndexingPipeline:
             result.documents_written = write_result["total_written"]
             result.chunk_count = write_result["chunks_written"]
             result.parent_count = write_result["parents_written"]
-            logger.info(f"[步骤] {step}: 完成 ({time.time()-t_step:.1f}s)")
+            logger.info(f"[步骤] {step}: 完成 ({time.time() - t_step:.1f}s)")
         except Exception as e:
             logger.error(f"[步骤] {step}: 异常: {e}", exc_info=True)
             result.errors.append(f"{step} 失败: {e}")
@@ -248,8 +248,7 @@ class IndexingPipeline:
         for i in range(0, total, embed_batch):
             batch = docs[i : i + embed_batch]
             valid_pairs = [
-                (idx, d) for idx, d in enumerate(batch)
-                if d.content and d.content.strip()
+                (idx, d) for idx, d in enumerate(batch) if d.content and d.content.strip()
             ]
             if not valid_pairs:
                 continue

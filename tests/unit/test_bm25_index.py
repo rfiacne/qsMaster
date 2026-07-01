@@ -15,7 +15,7 @@ from unittest.mock import patch
 
 import pytest
 
-from qa.pipelines.components.bm25_index import GlobalBM25Index, _get_all_chunks
+from qa.pipelines.components.bm25_index import GlobalBM25Index, _get_all_chunks, load_or_build
 
 
 @dataclass
@@ -110,3 +110,51 @@ def test_get_all_chunks_returns_all_docs():
 
     result = _get_all_chunks(FakeStore())
     assert len(result) == 3
+
+
+class TestBM25Persistence:
+    """M6 FR-001/020: BM25 全量索引持久化与版本化失效"""
+
+    def test_save_and_load_roundtrip(self, tmp_path):
+        """持久化后可通过 load_or_build 重新加载"""
+        docs = [FakeDocument(id="d1", content="证券清算规则")]
+        idx = _make_built_index(tmp_path, docs)
+        idx.save()
+
+        # 用同版本号的 store 加载
+        class FakeStore:
+            store_version = "test-v1"
+
+        loaded = load_or_build(FakeStore(), persist_dir=str(tmp_path))
+        assert loaded is not None
+        assert loaded.is_built
+        assert loaded.version == "test-v1"
+
+    def test_version_mismatch_triggers_rebuild(self, tmp_path):
+        """版本不匹配时 load_or_build 会重建而非加载旧版"""
+        docs = [FakeDocument(id="d1", content="证券清算")]
+        idx = _make_built_index(tmp_path, docs)
+        idx.save()
+
+        # 不同版本号的 store
+        class FakeStore:
+            store_version = "different-v2"
+
+            class chunk_store:
+                @staticmethod
+                def filter_documents(filters=None):
+                    return []
+
+        loaded = load_or_build(FakeStore(), persist_dir=str(tmp_path))
+        # 版本不匹配会重建（空 store → 空索引），不会是旧版
+        assert loaded.version == "different-v2"
+
+    def test_total_docs_property(self, tmp_path):
+        """total_docs 属性反映文档数"""
+        docs = [
+            FakeDocument(id="d1", content="内容一"),
+            FakeDocument(id="d2", content="内容二"),
+            FakeDocument(id="d3", content="内容三"),
+        ]
+        idx = _make_built_index(tmp_path, docs)
+        assert idx.total_docs == 3

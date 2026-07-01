@@ -41,6 +41,7 @@ from qa.pipelines.components.review_queue import (  # noqa: E402
 # AliasQuestion & AuditEntry
 # ═══════════════════════════════════════════════════════════════
 
+
 class TestAliasQuestion:
     def test_default(self):
         a = AliasQuestion()
@@ -61,8 +62,10 @@ class TestAuditEntry:
 
     def test_with_values(self):
         e = AuditEntry(  # noqa: E501
-            action="disable", field="status",
-            old_value="enabled", new_value="disabled",
+            action="disable",
+            field="status",
+            old_value="enabled",
+            new_value="disabled",
             operator="admin",
         )
         assert e.action == "disable"
@@ -72,6 +75,7 @@ class TestAuditEntry:
 # ═══════════════════════════════════════════════════════════════
 # StandardAnswer 别名/状态
 # ═══════════════════════════════════════════════════════════════
+
 
 class TestStandardAnswerAliasStatus:
     """StandardAnswer 新增字段"""
@@ -102,7 +106,8 @@ class TestStandardAnswerAliasStatus:
 
     def test_from_dict_with_aliases(self):
         d = {
-            "question": "Q", "answer": "A",
+            "question": "Q",
+            "answer": "A",
             "status": "disabled",
             "aliases": [{"question": "别名Q", "similarity_score": 0.85}],
         }
@@ -210,6 +215,7 @@ class TestStandardAnswerStoreAliasStatus:
 # ReviewItem & ReviewStatus
 # ═══════════════════════════════════════════════════════════════
 
+
 class TestReviewItem:
     def test_default(self):
         item = ReviewItem()
@@ -218,8 +224,10 @@ class TestReviewItem:
 
     def test_from_dict_roundtrip(self):
         original = ReviewItem(
-            question="测试问题", answer="测试回答",
-            faithfulness_score=0.3, faithfulness_result="fail",
+            question="测试问题",
+            answer="测试回答",
+            faithfulness_score=0.3,
+            faithfulness_result="fail",
             priority="high",
         )
         d = original.to_dict()
@@ -230,8 +238,11 @@ class TestReviewItem:
 
     def test_with_label(self):
         item = ReviewItem(
-            question="Q", answer="A", status="reviewed",
-            label="correct", reviewer="admin",
+            question="Q",
+            answer="A",
+            status="reviewed",
+            label="correct",
+            reviewer="admin",
             review_comment="正确",
         )
         assert item.status == "reviewed"
@@ -266,6 +277,7 @@ class TestReviewStats:
 # ═══════════════════════════════════════════════════════════════
 # ReviewStore
 # ═══════════════════════════════════════════════════════════════
+
 
 class TestReviewStore:
     @pytest.fixture(autouse=True)
@@ -346,6 +358,7 @@ class TestReviewStore:
     def test_persistence(self):
         import shutil
         import tempfile
+
         tmpdir = tempfile.mkdtemp()
         try:
             store1 = ReviewStore(store_path=tmpdir)
@@ -364,6 +377,7 @@ class TestReviewStore:
 # ReviewWorkflow
 # ═══════════════════════════════════════════════════════════════
 
+
 class TestReviewWorkflow:
     @pytest.fixture(autouse=True)
     def setup(self):
@@ -379,8 +393,10 @@ class TestReviewWorkflow:
 
     def test_add_item_high_priority(self):
         item_id = self.workflow.add_item(
-            question="Q", answer="A",
-            faithfulness_score=0.2, faithfulness_result="fail",
+            question="Q",
+            answer="A",
+            faithfulness_score=0.2,
+            faithfulness_result="fail",
             priority="high",
         )
         item = self.workflow.store.get(item_id)
@@ -430,6 +446,7 @@ class TestReviewWorkflow:
 
     def test_archive_old(self):
         import time
+
         item_id = self.workflow.add_item(question="Q", answer="A")
         # 设置创建时间为 100 天前
         old_time = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(time.time() - 100 * 86400))
@@ -451,6 +468,7 @@ class TestAutoConvert:
             self.store_path = tmpdir
             # StandardAnswerStore
             from qa.pipelines.components.early_exit import StandardAnswerStore
+
             self.std_store = StandardAnswerStore(store_path=tmpdir)
             self.std_store.load()
             # ReviewWorkflow
@@ -473,6 +491,7 @@ class TestAutoConvert:
     def test_below_threshold_creates_candidate(self, mock_embed):
         """相似度低于阈值时创建 candidate"""
         from qa.pipelines.components.early_exit import StandardAnswer
+
         self.std_store.add(StandardAnswer(question="现有问题", answer="现有答案", source="test"))
         aid = list(self.std_store._answers.keys())[0]
         # 使用正交向量确保相似度为 0
@@ -489,6 +508,7 @@ class TestAutoConvert:
     def test_above_threshold_adds_alias(self, mock_embed):
         """相似度高于阈值时添加别名"""
         from qa.pipelines.components.early_exit import StandardAnswer
+
         self.std_store.add(StandardAnswer(question="沪深交易所清算", answer="T+1", source="test"))
         # mock 嵌入：返回高度相似的向量
         aid = list(self.std_store._answers.keys())[0]
@@ -503,6 +523,7 @@ class TestAutoConvert:
     def test_label_correct_triggers_auto_convert(self, mock_embed):
         """label('correct') 应触发自动转换"""
         from qa.pipelines.components.early_exit import StandardAnswer
+
         self.std_store.add(StandardAnswer(question="现有问题", answer="现有答案", source="test"))
         aid = list(self.std_store._answers.keys())[0]
         mock_embed.return_value = [0.12, 0.22, 0.31]
@@ -510,7 +531,8 @@ class TestAutoConvert:
 
         item_id = self.workflow.add_item(question="与现有相似的问题", answer="答案")
         result = self.workflow.label(
-            item_id, "correct",
+            item_id,
+            "correct",
             standard_answer_store=self.std_store,
         )
         assert result is True
@@ -527,6 +549,7 @@ class TestAutoConvert:
     def test_label_correct_auto_convert_false(self):
         """auto_convert=False 时不应触发转换"""
         from qa.pipelines.components.early_exit import StandardAnswer
+
         self.std_store.add(StandardAnswer(question="Q", answer="A", source="test"))
         item_id = self.workflow.add_item(question="问题", answer="答案")
         result = self.workflow.label(item_id, "correct", auto_convert=False)

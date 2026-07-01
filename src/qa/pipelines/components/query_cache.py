@@ -35,6 +35,8 @@ class QueryCacheEntry:
     result: Any | None = None  # QueryResult (avoid circular import)
     created_at: float = 0.0
     ttl: float = 300.0
+    faithfulness_verified: bool = False  # 是否已通过 Faithfulness 校验
+    faithfulness_score: float = 1.0  # 校验得分 (0~1)
 
     @property
     def expired(self) -> bool:
@@ -72,7 +74,7 @@ class QueryCache:
         self,
         question: str,
         top_k: int,
-        filters: dict | None = None,
+        filters: dict[str, Any] | None = None,
     ) -> str:
         """生成缓存 key
 
@@ -86,7 +88,7 @@ class QueryCache:
         self,
         question: str,
         top_k: int,
-        filters: dict | None = None,
+        filters: dict[str, Any] | None = None,
     ) -> Any | None:  # returns QueryResult or None
         """获取缓存条目
 
@@ -127,9 +129,20 @@ class QueryCache:
         question: str,
         top_k: int,
         result: Any,  # QueryResult
-        filters: dict | None = None,
+        filters: dict[str, Any] | None = None,
+        faithfulness_verified: bool = False,
+        faithfulness_score: float = 1.0,
     ) -> None:
-        """写入缓存条目"""
+        """写入缓存条目
+
+        Args:
+            question: 用户问题
+            top_k: 检索数量
+            result: QueryResult 对象
+            filters: 过滤条件
+            faithfulness_verified: 是否已通过 Faithfulness 校验
+            faithfulness_score: 校验得分
+        """
         if not self.enabled:
             return
 
@@ -145,6 +158,8 @@ class QueryCache:
                 result=result,
                 created_at=time.time(),
                 ttl=self.ttl_seconds,
+                faithfulness_verified=faithfulness_verified,
+                faithfulness_score=faithfulness_score,
             )
             self._cache[key] = entry
             logger.debug(f"查询缓存写入: key={key[:12]}...")
@@ -182,7 +197,7 @@ class QueryCache:
         if self.store_manager is None:
             return ""
         try:
-            return self.store_manager.store_version
+            return str(self.store_manager.store_version)
         except Exception:
             return ""
 

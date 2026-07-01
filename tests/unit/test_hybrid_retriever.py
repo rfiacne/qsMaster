@@ -17,6 +17,7 @@ from typing import Any  # noqa: E402
 @dataclass
 class FakeDocument:
     """Minimal stand-in for haystack.Document"""
+
     id: str | None = None
     content: str = ""
     meta: dict[str, Any] = field(default_factory=dict)
@@ -25,12 +26,14 @@ class FakeDocument:
     def __repr__(self):
         return f"Doc({self.id}, score={self.score})"
 
+
 # 导入被测模块
 from qa.pipelines.components.hybrid_retriever import HybridRetriever  # noqa: E402
 
 
 class FakeStoreManager:
     """Minimal stand-in for StoreManager"""
+
     def __init__(self, docs=None):
         self.docs = docs or []
 
@@ -73,7 +76,7 @@ class TestSourceTypeAnnotation:
 
     def test_top_k_respected(self):
         """top_k 参数应限制返回结果数量"""
-        docs = [make_doc(f"doc{i}", f"内容{i}", 1.0 - i*0.1) for i in range(10)]
+        docs = [make_doc(f"doc{i}", f"内容{i}", 1.0 - i * 0.1) for i in range(10)]
         store = FakeStoreManager(docs)
         hybrid = HybridRetriever(store_manager=store, top_k=3)
         results = hybrid.retrieve(

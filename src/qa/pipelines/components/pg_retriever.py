@@ -38,8 +38,13 @@ class PgFullTextRetriever:
         min_conn: int = 1,
         max_conn: int = 5,
     ):
-        self._config = {"host": host, "port": port, "dbname": dbname,
-                        "user": user, "password": password}
+        self._config = {
+            "host": host,
+            "port": port,
+            "dbname": dbname,
+            "user": user,
+            "password": password,
+        }
         self._pool: Any = None
         self._available = False
         self._min_conn = min_conn
@@ -53,9 +58,8 @@ class PgFullTextRetriever:
             return self._available
         try:
             from psycopg2 import pool
-            self._pool = pool.ThreadedConnectionPool(
-                self._min_conn, self._max_conn, **self._config
-            )
+
+            self._pool = pool.ThreadedConnectionPool(self._min_conn, self._max_conn, **self._config)
             self._available = True
             self._ensure_table()
             logger.info(
@@ -68,7 +72,7 @@ class PgFullTextRetriever:
             self._pool = None
         return self._available
 
-    def _get_conn(self):
+    def _get_conn(self) -> Any | None:
         """获取连接"""
         if not self._init_pool():
             return None
@@ -78,7 +82,7 @@ class PgFullTextRetriever:
             logger.error(f"获取 PG 连接失败: {e}")
             return None
 
-    def _put_conn(self, conn) -> None:
+    def _put_conn(self, conn: Any) -> None:
         """归还连接"""
         if conn and self._pool:
             try:
@@ -152,13 +156,16 @@ class PgFullTextRetriever:
             cur = conn.cursor()
             count = 0
             for doc_id, content, file_path, source, category in docs:
-                cur.execute("""
+                cur.execute(
+                    """
                     INSERT INTO qa_documents (id, content, file_path, source, category)
                     VALUES (%s, %s, %s, %s, %s)
                     ON CONFLICT (id) DO UPDATE SET
                         content = EXCLUDED.content,
                         file_path = EXCLUDED.file_path
-                """, (doc_id, content, file_path, source, category))
+                """,
+                    (doc_id, content, file_path, source, category),
+                )
                 count += 1
             conn.commit()
             logger.debug(f"PG 索引完成: {count} 文档")
@@ -189,7 +196,7 @@ class PgFullTextRetriever:
         finally:
             self._put_conn(conn)
 
-    # ─── 检索 ──────────────────────────────────────
+    # ─── 检索
 
     def search(
         self,
@@ -236,12 +243,14 @@ class PgFullTextRetriever:
             results = []
             for row in rows:
                 doc_id, content, file_path, score = row
-                results.append({
-                    "id": doc_id,
-                    "content": content,
-                    "file_path": file_path or "",
-                    "score": round(float(score), 4),
-                })
+                results.append(
+                    {
+                        "id": doc_id,
+                        "content": content,
+                        "file_path": file_path or "",
+                        "score": round(float(score), 4),
+                    }
+                )
             return results
 
         except Exception as e:
@@ -291,6 +300,7 @@ class PgFullTextRetriever:
     def _tokenize_query(text: str) -> list[str]:
         """简单中文/英文分词（用于 tsquery）"""
         import re
+
         tokens = []
         # 提取英文单词
         eng_words = re.findall(r"[a-zA-Z0-9]+", text)
@@ -301,7 +311,7 @@ class PgFullTextRetriever:
             # 单个中文字符作为一个 token
             tokens.extend(list(chunk))
             # 2-gram 提升召回
-            tokens.extend([chunk[i:i+2] for i in range(len(chunk)-1)])
+            tokens.extend([chunk[i : i + 2] for i in range(len(chunk) - 1)])
         # 去重 + 限制长度
         unique = list(dict.fromkeys(tokens))
         return [t for t in unique if len(t) <= 50][:20]  # 最多 20 个 token

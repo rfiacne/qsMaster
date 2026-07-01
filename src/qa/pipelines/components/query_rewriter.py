@@ -79,7 +79,7 @@ class QueryRewriter:
         self.timeout_seconds = timeout_seconds
         self.enabled = enabled
         self._term_map: dict[str, str] = {}
-        self._term_patterns: list[tuple[re.Pattern, str]] = []
+        self._term_patterns: list[tuple[re.Pattern[str], str]] = []
         self._load_term_map()
 
     def _load_term_map(self) -> None:
@@ -197,27 +197,25 @@ class QueryRewriter:
     def _should_decompose(self, text: str) -> bool:
         """判断是否需要尝试多意图分解
 
-        仅当问题中包含连词且不在专有术语中时才调用 LLM。
+        优先级:
+        1. 多个问号（?/?）→ 直接分解
+        2. 含连词且不在专有术语中 → LLM 判定
         """
+        # 检查问号数量 > 1（强信号：直接表示多个问题）
+        if text.count("?") + text.count("？") > 1:
+            return True
+
         # 检查是否包含连词
         has_conjunction = any(c in text for c in INTENT_CONJUNCTIONS)
         if not has_conjunction:
             return False
 
-        # 检查问号数量 > 1
-        if text.count("?") + text.count("？") > 1:
-            return True
-
         # 检查文本是否完全由某个专有术语覆盖
-        # 如果问题只有一段且包含连词但整体是专有术语，不分解
         for term in COMPOUND_TERMS:
             if term in text:
-                # 问题中包含专有术语，且连词恰好在术语中
-                # 此时需要进一步判断：是否还有其他独立连词
                 remaining = text
                 for t in COMPOUND_TERMS:
                     remaining = remaining.replace(t, "")
-                # 如果去掉专有术语后还有连词，则仍需分解
                 if any(c in remaining for c in INTENT_CONJUNCTIONS):
                     return True
                 return False

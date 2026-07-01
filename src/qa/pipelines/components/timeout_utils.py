@@ -24,14 +24,15 @@ logger = logging.getLogger(__name__)
 
 class OperationTimeoutError(Exception):
     """操作超时"""
+
     pass
 
 
 def run_with_timeout(
-    func: Callable,
+    func: Callable[..., Any],
     timeout_sec: float = 30.0,
-    args: tuple = (),
-    kwargs: dict | None = None,
+    args: tuple[Any, ...] = (),
+    kwargs: dict[str, Any] | None = None,
 ) -> Any:
     """在子线程中运行函数，超时则抛出 TimeoutError
 
@@ -54,7 +55,7 @@ def run_with_timeout(
     result = []
     exception = []
 
-    def runner():
+    def runner() -> None:
         try:
             res = func(*args, **kwargs)
             result.append(res)

@@ -160,19 +160,19 @@ class TestClaimExtraction:
             assert len(c) >= 10, f"Short claim not filtered: {c}"
 
     def test_filter_acknowledgments(self):
-        """"是/不是/好的"等确认词应过滤"""
+        """ "是/不是/好的"等确认词应过滤"""
         text = "是的。不是。好的。根据文档规定，T+1是指交易日次日。"
         claims = self.evaluator._extract_claims(text)
         assert not any(c in ("是", "不是", "是的", "好的") for c in claims)
 
     def test_remove_citation_prefix(self):
-        """"根据XX"前缀应去除"""
+        """ "根据XX"前缀应去除"""
         text = "根据来源:CSDC规则，沪深交易所实行T+1制度。来源:文档，T+1是标准规则。"
         claims = self.evaluator._extract_claims(text)
         assert any("T+1" in c for c in claims)
 
     def test_remove_bracket_citation(self):
-        """"[来源:XX]"前缀应去除"""
+        """ "[来源:XX]"前缀应去除"""
         text = "[来源:清算规则]沪深交易所A股实行T+1清算制度。"
         claims = self.evaluator._extract_claims(text)
         assert any("T+1清算制度" in c for c in claims)
@@ -323,10 +323,12 @@ class TestParseBatchResponse:
         self.evaluator = FaithfulnessEvaluator(enabled=True)
 
     def test_valid_json_all_supported(self):
-        response = json.dumps([
-            {"claim_idx": 0, "supported": True, "evidence": "文档片段1", "confidence": 0.9},
-            {"claim_idx": 1, "supported": False, "evidence": "", "confidence": 0.1},
-        ])
+        response = json.dumps(
+            [
+                {"claim_idx": 0, "supported": True, "evidence": "文档片段1", "confidence": 0.9},
+                {"claim_idx": 1, "supported": False, "evidence": "", "confidence": 0.1},
+            ]
+        )
         claims = ["声明1", "声明2"]
         results = self.evaluator._parse_batch_response(response, claims)
         assert len(results) == 2
@@ -335,9 +337,11 @@ class TestParseBatchResponse:
 
     def test_missing_claim_indices(self):
         """缺少某些索引时默认通过"""
-        response = json.dumps([
-            {"claim_idx": 0, "supported": True, "evidence": "", "confidence": 0.9},
-        ])
+        response = json.dumps(
+            [
+                {"claim_idx": 0, "supported": True, "evidence": "", "confidence": 0.9},
+            ]
+        )
         claims = ["声明1", "声明2", "声明3"]
         results = self.evaluator._parse_batch_response(response, claims)
         assert len(results) == 3
@@ -449,10 +453,10 @@ class TestEvaluateResult:
             doc.content = "doc"
             doc.meta = {}
             report = evaluator.evaluate(  # noqa: E501
-            "Q",
-            "这是一个足够长的测试回答语句。这是第二条测试声明内容。",
-            [doc],
-        )
+                "Q",
+                "这是一个足够长的测试回答语句。这是第二条测试声明内容。",
+                [doc],
+            )
             assert report.result == FaithfulnessResult.FAIL
             assert report.score == 0.0
 
@@ -467,7 +471,9 @@ class TestEvaluateResult:
             doc = mock.MagicMock()
             doc.content = "doc"
             doc.meta = {}
-            report = evaluator.evaluate("Q", "第一条被支撑的测试声明内容。第二条未被支撑的声明内容。", [doc])  # noqa: E501
+            report = evaluator.evaluate(
+                "Q", "第一条被支撑的测试声明内容。第二条未被支撑的声明内容。", [doc]
+            )  # noqa: E501
             assert report.result == FaithfulnessResult.PARTIAL
             assert report.score == 0.5
 

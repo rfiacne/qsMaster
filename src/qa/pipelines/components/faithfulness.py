@@ -8,6 +8,7 @@ Faithfulness 校验组件 — LLM-as-judge 防幻觉声明校验
   1. 将 LLM 回答拆解为原子声明（claim）
   2. 对每条声明，用 LLM 判断是否被检索文档支撑
   3. 汇总结果：全通过 → pass，部分 → partial，全部不通过 → fail
+  4. 回答级缓存：相同回答直接返回校验结果（避免重复 LLM 调用）
 
 用法:
     evaluator = FaithfulnessEvaluator()
@@ -24,9 +25,11 @@ Faithfulness 校验组件 — LLM-as-judge 防幻觉声明校验
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
+import threading
 import time
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -44,6 +47,7 @@ logger = logging.getLogger(__name__)
 
 class FaithfulnessResult(StrEnum):
     """忠实度校验结果"""
+
     PASS = "pass"
     PARTIAL = "partial"
     FAIL = "fail"
@@ -56,24 +60,26 @@ class FaithfulnessResult(StrEnum):
 @dataclass
 class ClaimCheck:
     """单条声明的校验结果"""
-    claim: str = ""                    # 原子声明文本
-    supported: bool = True             # 是否有检索支撑
-    confidence: float = 1.0            # 支撑置信度 (0~1)
-    evidence: str = ""                 # 支撑该声明的原文片段
-    reason: str = ""                   # 判断理由
+
+    claim: str = ""  # 原子声明文本
+    supported: bool = True  # 是否有检索支撑
+    confidence: float = 1.0  # 支撑置信度 (0~1)
+    evidence: str = ""  # 支撑该声明的原文片段
+    reason: str = ""  # 判断理由
 
 
 @dataclass
 class FaithfulnessReport:
     """忠实度校验报告"""
+
     result: FaithfulnessResult = FaithfulnessResult.SKIPPED
     total_claims: int = 0
     supported_claims: int = 0
     unsupported_claims: int = 0
     claims: list[ClaimCheck] = field(default_factory=list)
-    score: float = 1.0                 # 0~1，支撑比例
-    evaluation_time_ms: float = 0.0    # 校验耗时
-    error: str | None = None        # 校验过程中的错误
+    score: float = 1.0  # 0~1，支撑比例
+    evaluation_time_ms: float = 0.0  # 校验耗时
+    error: str | None = None  # 校验过程中的错误
 
     @property
     def passed(self) -> bool:
@@ -157,6 +163,13 @@ class FaithfulnessEvaluator:
         self.judge_api_base_url = judge_api_base_url
         self._llm_client = None
 
+        # 回答级缓存：避免重复校验相同回答（线程安全）
+        self._cache_enabled = True
+        self._cache_ttl = 300.0  # 5分钟缓存
+        self._cache_max_size = 1000
+        self._cache: dict[str, tuple[float, FaithfulnessReport]] = {}  # key -> (timestamp, report)
+        self._cache_lock = threading.Lock()
+
     def evaluate(
         self,
         question: str,
@@ -176,6 +189,20 @@ class FaithfulnessEvaluator:
         if not self.enabled or not answer:
             return FaithfulnessReport(result=FaithfulnessResult.SKIPPED)
 
+        # 生成缓存键（基于问题 + 回答的哈希）
+        cache_key = self._make_cache_key(question, answer)
+
+        # 检查缓存（加锁保护）
+        if self._cache_enabled:
+            with self._cache_lock:
+                if cache_key in self._cache:
+                    timestamp, report = self._cache[cache_key]
+                    if time.time() - timestamp < self._cache_ttl:
+                        logger.debug(f"Faithfulness 缓存命中: {cache_key[:8]}...")
+                        # 更新访问时间（LRU）
+                        self._cache[cache_key] = (time.time(), report)
+                        return report
+
         t0 = time.time()
         report = FaithfulnessReport()
 
@@ -187,6 +214,8 @@ class FaithfulnessEvaluator:
                 report.result = FaithfulnessResult.PASS
                 report.total_claims = 0
                 report.evaluation_time_ms = (time.time() - t0) * 1000
+                # 缓存结果
+                self._set_cache(cache_key, report)
                 return report
 
             # 截断过多声明
@@ -194,7 +223,7 @@ class FaithfulnessEvaluator:
                 logger.warning(
                     f"Faithfulness: 声明数 {len(claims)} 超过上限 {self.max_claims}，截断"
                 )
-                claims = claims[:self.max_claims]
+                claims = claims[: self.max_claims]
 
             # 2) 构建上下文文本
             context_text = self._format_context(context_docs)
@@ -237,7 +266,32 @@ class FaithfulnessEvaluator:
             f"耗时={report.evaluation_time_ms:.0f}ms)"
         )
 
+        # 缓存结果
+        if self._cache_enabled:
+            self._set_cache(cache_key, report)
+
         return report
+
+    # ─── 缓存管理 ───────────────────────────────────────────────
+
+    def _make_cache_key(self, question: str, answer: str) -> str:
+        """生成缓存键（基于问题和回答的哈希）"""
+        key_content = f"{question}|{answer}"
+        return hashlib.md5(key_content.encode()).hexdigest()
+
+    def _set_cache(self, key: str, report: FaithfulnessReport) -> None:
+        """将校验结果写入缓存（线程安全）"""
+        if not self._cache_enabled:
+            return
+
+        with self._cache_lock:
+            # 如果缓存已满，移除最旧的条目
+            if len(self._cache) >= self._cache_max_size:
+                oldest_key = min(self._cache.keys(), key=lambda k: self._cache[k][0])
+                del self._cache[oldest_key]
+
+            self._cache[key] = (time.time(), report)
+            logger.debug(f"Faithfulness 缓存写入: {key[:8]}...")
 
     # ─── 声明拆解 ───────────────────────────────────────────────
 
@@ -251,7 +305,7 @@ class FaithfulnessEvaluator:
         4. 去除只有格式或引用标记的句子
         """
         # 拆句
-        raw_sentences = re.split(r'(?<=[。；！？\n])\s*', answer)
+        raw_sentences = re.split(r"(?<=[。；！？\n])\s*", answer)
         sentences = [s.strip() for s in raw_sentences if s.strip()]
 
         claims = []
@@ -261,8 +315,8 @@ class FaithfulnessEvaluator:
                 continue
 
             # 去除引用前缀：如"根据[来源:XXX]"，"来源:XXX"
-            cleaned = re.sub(r'^根据?\s*\[?来源[:：].*?\]?\s*', '', s)
-            cleaned = re.sub(r'^\[来源[:：].*?\]\s*', '', cleaned)
+            cleaned = re.sub(r"^根据?\s*\[?来源[:：].*?\]?\s*", "", s)
+            cleaned = re.sub(r"^\[来源[:：].*?\]\s*", "", cleaned)
 
             # 如果清理后为空或太短，跳过
             cleaned = cleaned.strip()
@@ -270,7 +324,7 @@ class FaithfulnessEvaluator:
                 continue
 
             # 过滤纯格式或列表标记（如"1."、"①"等）
-            if re.match(r'^[\d①②③④⑤⑥⑦⑧⑨⑩\.\-\*\s]{1,5}$', cleaned):
+            if re.match(r"^[\d①②③④⑤⑥⑦⑧⑨⑩\.\-\*\s]{1,5}$", cleaned):
                 continue
 
             # 过滤只是"是的"/"不是"/"好的"等简短确认
@@ -303,7 +357,7 @@ class FaithfulnessEvaluator:
         for i, doc in enumerate(context_docs, 1):
             meta = doc.meta or {}
             source = meta.get("file_path", meta.get("source", f"doc_{i}"))
-            content = (doc.content or "")[:self.max_context_chars]  # 截断保护 token
+            content = (doc.content or "")[: self.max_context_chars]  # 截断保护 token
             parts.append(f"[文档{i}] {source}:\n{content}")
 
         return "\n\n---\n\n".join(parts)
@@ -331,8 +385,7 @@ class FaithfulnessEvaluator:
             logger.error(f"Faithfulness LLM 校验调用失败: {e}")
             # fallback: 默认全部通过（避免误拦截）
             fallback = [
-                ClaimCheck(claim=c, supported=True, reason="校验失败，默认通过")
-                for c in claims
+                ClaimCheck(claim=c, supported=True, reason="校验失败，默认通过") for c in claims
             ]
             return fallback, str(e)
 
@@ -347,7 +400,7 @@ class FaithfulnessEvaluator:
 
         让 LLM 一次性判断所有声明，返回 JSON 结果。
         """
-        claims_text = "\n".join(f"  [{i+1}] {c}" for i, c in enumerate(claims))
+        claims_text = "\n".join(f"  [{i + 1}] {c}" for i, c in enumerate(claims))
 
         # noqa: E501 start (long prompt lines — kept intact for LLM quality)
         system_prompt = (
@@ -357,8 +410,8 @@ class FaithfulnessEvaluator:
             "1. 只基于检索到的文档片段判断，不依赖自己的知识\n"
             "2. 支撑指文档片段中明确包含该声明的信息，或可以明确推理得出\n"
             "3. 如果声明包含引用前缀（如根据XX），忽略前缀，只看事实内容是否在文档中\n"
-            "4. 对每条声明输出 JSON 数组：[{\"claim_idx\": 0, \"supported\": true/false, "
-            "\"evidence\": \"支撑的原文片段\", \"confidence\": 0.0~1.0}]\n"
+            '4. 对每条声明输出 JSON 数组：[{"claim_idx": 0, "supported": true/false, '
+            '"evidence": "支撑的原文片段", "confidence": 0.0~1.0}]\n'
             "5. evidence 从文档片段中截取最相关的原文（含文件名），不超过 100 字\n"
             "6. confidence 表示支撑的可信度：1.0=明确支撑，0.7=可推理支撑，"
             "0.3=弱支撑或间接相关，0.0=完全不支撑\n"
@@ -384,9 +437,7 @@ class FaithfulnessEvaluator:
             {"role": "user", "content": user_prompt},
         ]
 
-    def _parse_batch_response(
-        self, response: str, claims: list[str]
-    ) -> list[ClaimCheck]:
+    def _parse_batch_response(self, response: str, claims: list[str]) -> list[ClaimCheck]:
         """解析 LLM 返回的 JSON 校验结果"""
         # 提取 JSON 部分
         json_str = self._extract_json(response)
@@ -419,13 +470,15 @@ class FaithfulnessEvaluator:
             reason = item.get("reason", "")
 
             # 如果 LLM 没有返回结果，默认通过
-            results.append(ClaimCheck(
-                claim=claim,
-                supported=bool(supported),
-                confidence=confidence,
-                evidence=evidence[:300] if evidence else "",
-                reason=reason,
-            ))
+            results.append(
+                ClaimCheck(
+                    claim=claim,
+                    supported=bool(supported),
+                    confidence=confidence,
+                    evidence=evidence[:300] if evidence else "",
+                    reason=reason,
+                )
+            )
 
         return results
 
@@ -449,6 +502,7 @@ class FaithfulnessEvaluator:
 
         if self._llm_client is None:
             from openai import OpenAI
+
             self._llm_client = OpenAI(
                 api_key=api_key,
                 base_url=base_url,
@@ -470,7 +524,7 @@ class FaithfulnessEvaluator:
     def _extract_json(text: str) -> str | None:
         """从 LLM 响应中提取 JSON 数组或对象"""
         # 尝试提取 ```json ... ``` 代码块
-        m = re.search(r'```(?:json)?\s*\n?(.*?)\n?```', text, re.DOTALL)
+        m = re.search(r"```(?:json)?\s*\n?(.*?)\n?```", text, re.DOTALL)
         if m:
             return m.group(1).strip()
 
@@ -487,7 +541,7 @@ class FaithfulnessEvaluator:
                     elif text[i] == close:
                         depth -= 1
                         if depth == 0:
-                            return text[start:i + 1]
+                            return text[start : i + 1]
 
         return None
 

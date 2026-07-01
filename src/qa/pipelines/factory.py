@@ -177,9 +177,7 @@ def build_query_pipeline(
         enabled=settings.otel.enabled,
     )
 
-    query_rewriter, query_cache, bm25_index = build_query_components(
-        settings, store_manager
-    )
+    query_rewriter, query_cache, bm25_index = build_query_components(settings, store_manager)
 
     from qa.pipelines.querying import QueryPipeline
 

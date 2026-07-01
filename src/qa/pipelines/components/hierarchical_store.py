@@ -121,8 +121,7 @@ class HierarchicalDocumentSplitter:
                     parent.meta["children_ids"] = parent_children[parent.id]
 
         logger.info(
-            f"分层分割完成: {len(documents)} 文档 → "
-            f"{len(parents)} 大块 + {len(chunks)} 小块"
+            f"分层分割完成: {len(documents)} 文档 → {len(parents)} 大块 + {len(chunks)} 小块"
         )
 
         return {"parents": parents, "chunks": chunks}
@@ -204,12 +203,8 @@ class StoreWriter:
         """写入分层的文档到向量存储"""
         from haystack.document_stores.types import DuplicatePolicy
 
-        parent_count = self.store_manager.write_parents(
-            parents, policy=DuplicatePolicy.SKIP
-        )
-        chunk_count = self.store_manager.write_chunks(
-            chunks, policy=DuplicatePolicy.SKIP
-        )
+        parent_count = self.store_manager.write_parents(parents, policy=DuplicatePolicy.SKIP)
+        chunk_count = self.store_manager.write_chunks(chunks, policy=DuplicatePolicy.SKIP)
 
         return {
             "parents_written": parent_count,

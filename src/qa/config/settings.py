@@ -10,11 +10,12 @@
 from __future__ import annotations
 
 import logging
+import threading
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import yaml
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic_settings.sources import EnvSettingsSource
 
@@ -26,6 +27,10 @@ class ApiKeyMixin:
 
     子类需定义 api_key: str | None 和 api_key_env: str 字段。
     """
+
+    if TYPE_CHECKING:
+        api_key: str | None
+        api_key_env: str
 
     @property
     def resolved_api_key(self) -> str | None:
@@ -64,12 +69,8 @@ class LLMConfig(ApiKeyMixin, BaseSettings):
         description="存储 API 密钥的环境变量名（如 INTERNAL_API_KEY）",
     )
     timeout_seconds: int = Field(default=30, ge=1, le=300, description="API 超时阈值（秒）")
-    temperature: float = Field(
-        default=0.3, ge=0.0, le=2.0, description="LLM 生成温度"
-    )
-    max_tokens: int = Field(
-        default=2048, ge=128, le=32768, description="LLM 最大生成 token 数"
-    )
+    temperature: float = Field(default=0.3, ge=0.0, le=2.0, description="LLM 生成温度")
+    max_tokens: int = Field(default=2048, ge=128, le=32768, description="LLM 最大生成 token 数")
 
 
 class EmbeddingConfig(ApiKeyMixin, BaseSettings):
@@ -217,9 +218,7 @@ class RerankConfig(ApiKeyMixin, BaseSettings):
         le=50,
         description="Reranker 重排后返回的结果数",
     )
-    timeout_seconds: int = Field(
-        default=30, ge=5, le=300, description="Reranker API 超时（秒）"
-    )
+    timeout_seconds: int = Field(default=30, ge=5, le=300, description="Reranker API 超时（秒）")
 
 
 class ServerConfig(BaseSettings):
@@ -247,12 +246,12 @@ class ServerConfig(BaseSettings):
     @classmethod
     def settings_customise_sources(
         cls,
-        settings_cls,
-        init_settings,
-        env_settings,
-        dotenv_settings,
-        file_secret_settings,
-    ):
+        settings_cls: type[BaseSettings],
+        init_settings: Any,
+        env_settings: Any,
+        dotenv_settings: Any,
+        file_secret_settings: Any,
+    ) -> tuple[Any, ...]:
         """Use CSV-capable env source for list[str] fields.
 
         pydantic-settings v2 defaults to JSON for list fields. This custom
@@ -263,7 +262,7 @@ class ServerConfig(BaseSettings):
         import json as _json
 
         class _CSVEnvSource(EnvSettingsSource):
-            def decode_complex_value(self, field_name, field, value):
+            def decode_complex_value(self, field_name: str, field: Any, value: Any) -> Any:
                 try:
                     return _json.loads(value)
                 except (ValueError, TypeError):
@@ -495,7 +494,7 @@ class Settings(BaseSettings):
             "llm": {
                 "api_base_url": self.llm.api_base_url,
                 "model": self.llm.model,
-                "api_key": "✅ 已配置" if self.llm.resolved_api_key else "❌ 未设置",
+                "api_key": "[已配置]" if self.llm.resolved_api_key else "[未设置]",
                 "api_key_env": self.llm.api_key_env,
                 "timeout_seconds": self.llm.timeout_seconds,
             },
@@ -504,7 +503,7 @@ class Settings(BaseSettings):
                 "api_base_url": self.embedding.api_base_url,
                 "model": self.embedding.model,
                 "dimensions": self.embedding.dimensions,
-                "api_key": "✅ 已配置" if self.embedding.resolved_api_key else "❌ 未设置",
+                "api_key": "[已配置]" if self.embedding.resolved_api_key else "[未设置]",
                 "api_key_env": self.embedding.api_key_env or "(未设置)",
                 "timeout_seconds": self.embedding.timeout_seconds,
             },
@@ -540,7 +539,7 @@ class Settings(BaseSettings):
             "rerank": {
                 "enabled": self.rerank.enabled,
                 "api_base_url": self.rerank.api_base_url or "(复用 embedding)",
-                "api_key": "✅ 已配置" if self.rerank.resolved_api_key else "❌ 未设置",
+                "api_key": "[已配置]" if self.rerank.resolved_api_key else "[未设置]",
                 "model": self.rerank.model,
                 "top_k": self.rerank.top_k,
             },
@@ -584,18 +583,25 @@ class Settings(BaseSettings):
 
 # 模块级单例（延迟初始化）
 _settings: Settings | None = None
+_settings_lock = threading.Lock()
 
 
 def get_settings(path: str | None = None) -> Settings:
-    """获取全局 Settings 单例"""
+    """获取全局 Settings 单例（线程安全）
+
+    使用双重检查锁定模式避免竞态条件。
+    """
     global _settings
     if _settings is None:
-        _settings = Settings.load(path)
+        with _settings_lock:
+            if _settings is None:
+                _settings = Settings.load(path)
     return _settings
 
 
 def reload_settings(path: str | None = None) -> Settings:
-    """重新加载配置"""
+    """重新加载配置（线程安全）"""
     global _settings
-    _settings = Settings.load(path)
-    return _settings
+    with _settings_lock:
+        _settings = Settings.load(path)
+        return _settings

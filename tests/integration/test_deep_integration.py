@@ -29,8 +29,7 @@ PDF2 = TESTFILE_DIR / (  # noqa: E501
     "实施相关准备工作的通知.pdf"
 )
 PDF3 = TESTFILE_DIR / (  # noqa: E501
-    "2026060501-关于配合上交所新固定收益系统上线"
-    "调整沪市登记结算数据接口的通知.pdf"
+    "2026060501-关于配合上交所新固定收益系统上线调整沪市登记结算数据接口的通知.pdf"
 )
 DOC = TESTFILE_DIR / "新意法人清算系统(含投保)E-SIM 6651 001上线确认书.doc"
 DOCX = TESTFILE_DIR / "证券经纪服务协议-北京信汇泉私募基金管理有限公司-金元证券公司 (1).docx"
@@ -41,6 +40,7 @@ XLSX = TESTFILE_DIR / "新增或修改的配置参数_新增20260610.xlsx"
 # 1. 文档内容准确性验证
 # ═══════════════════════════════════════════════════════════════
 
+
 class TestDocumentContentAccuracy:
     """验证各文档的关键内容正确提取"""
 
@@ -49,6 +49,7 @@ class TestDocumentContentAccuracy:
     def test_pdf1_csdc_notice(self):
         """PDF1: 中国结算深业全网测试通知"""
         from haystack.components.converters import PyPDFToDocument
+
         converter = PyPDFToDocument()
         result = converter.run(sources=[str(PDF1)])
         text = result["documents"][0].content or ""
@@ -57,8 +58,8 @@ class TestDocumentContentAccuracy:
         keywords = ["全网测试", "5月30日", "深市交易结算系统", "结算系统"]
         for kw in keywords:
             # 去空格比较
-            text_clean = text.replace(' ', '').replace('\n', '')
-            kw_clean = kw.replace(' ', '').replace('\n', '')
+            text_clean = text.replace(" ", "").replace("\n", "")
+            kw_clean = kw.replace(" ", "").replace("\n", "")
             assert kw_clean in text_clean, f"PDF1 缺少关键内容: {kw}"
 
         # 文号验证
@@ -72,14 +73,15 @@ class TestDocumentContentAccuracy:
     def test_pdf2_sse_rules(self):
         """PDF2: 上证所交易规则修订"""
         from haystack.components.converters import PyPDFToDocument
+
         converter = PyPDFToDocument()
         result = converter.run(sources=[str(PDF2)])
         text = result["documents"][0].content or ""
 
         keywords = ["交易规则", "上海证券交易所", "实施", "2026"]
         for kw in keywords:
-            text_clean = text.replace(' ', '').replace('\n', '')
-            kw_clean = kw.replace(' ', '').replace('\n', '')
+            text_clean = text.replace(" ", "").replace("\n", "")
+            kw_clean = kw.replace(" ", "").replace("\n", "")
             assert kw_clean in text_clean, f"PDF2 缺少关键内容: {kw}"
 
         assert len(text) > 500, f"PDF2 内容过短: {len(text)}"
@@ -88,6 +90,7 @@ class TestDocumentContentAccuracy:
     def test_pdf3_fixed_income(self):
         """PDF3: 上交所新固定收益系统上线"""
         from haystack.components.converters import PyPDFToDocument
+
         converter = PyPDFToDocument()
         result = converter.run(sources=[str(PDF3)])
         text = result["documents"][0].content or ""
@@ -101,6 +104,7 @@ class TestDocumentContentAccuracy:
     def test_docx_contract(self):
         """DOCX: 证券经纪服务协议"""
         import docx
+
         doc = docx.Document(str(DOCX))
         paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
         text = "\n".join(paragraphs)
@@ -114,6 +118,7 @@ class TestDocumentContentAccuracy:
     def test_xlsx_config_table(self):
         """XLSX: 配置参数表——验证表格内容"""
         from haystack.components.converters import XLSXToDocument
+
         converter = XLSXToDocument()
         result = converter.run(sources=[str(XLSX)])
         text = result["documents"][0].content or ""
@@ -129,6 +134,7 @@ class TestDocumentContentAccuracy:
 # 2. 全文检索命中验证
 # ═══════════════════════════════════════════════════════════════
 
+
 class TestSearchAcrossDocuments:
     """验证检索能命中不同文档的关键内容"""
 
@@ -142,6 +148,7 @@ class TestSearchAcrossDocuments:
             ("pdf3", PDF3, "PyPDFToDocument"),
         ]
         from haystack.components.converters import PyPDFToDocument
+
         converter = PyPDFToDocument()
         for name, path, _ in docs_to_load:
             if path.exists():
@@ -151,11 +158,13 @@ class TestSearchAcrossDocuments:
 
         if DOCX.exists():
             import docx
+
             doc = docx.Document(str(DOCX))
             texts["docx"] = "\n".join(p.text for p in doc.paragraphs if p.text.strip())
 
         if XLSX.exists():
             from haystack.components.converters import XLSXToDocument
+
             converter = XLSXToDocument()
             result = converter.run(sources=[str(XLSX)])
             texts["xlsx"] = result["documents"][0].content or ""
@@ -184,7 +193,7 @@ class TestSearchAcrossDocuments:
             assert "证券经纪" in text, "DOCX 应包含'证券经纪'"
 
     def test_search_cross_document(self, all_docs_text):
-        """"深圳"应在 PDF1 中出现，在非深圳文档中不应出现"""
+        """ "深圳"应在 PDF1 中出现，在非深圳文档中不应出现"""
         pdf1_text = all_docs_text.get("pdf1", "")
         assert "深" in pdf1_text, "PDF1 应包含'深'"
 
@@ -192,6 +201,7 @@ class TestSearchAcrossDocuments:
 # ═══════════════════════════════════════════════════════════════
 # 3. 分层文档分割 + 存储 + 检索集成
 # ═══════════════════════════════════════════════════════════════
+
 
 class TestIndexingAndRetrievalPipeline:
     """真实文档的分割 → 写入 → 检索全链路"""
@@ -217,6 +227,7 @@ class TestIndexingAndRetrievalPipeline:
         raw_doc = result["documents"][0]
         # 注入元数据
         import dataclasses
+
         raw_doc = dataclasses.replace(raw_doc, meta={**raw_doc.meta, **meta}, id=filepath.stem)
 
         # 分割
@@ -235,8 +246,12 @@ class TestIndexingAndRetrievalPipeline:
     def test_index_pdf1_and_retrieve(self, store_and_splitter):
         """索引 PDF1 后应能检索命中"""
         chunk_store, parent_store, splitter = store_and_splitter
-        meta = {"source": "CSDC", "category": "clearing_rule", "effective_date": "2026-06-01",
-                "file_path": str(PDF1)}
+        meta = {
+            "source": "CSDC",
+            "category": "clearing_rule",
+            "effective_date": "2026-06-01",
+            "file_path": str(PDF1),
+        }
 
         n_parents, n_chunks = self._load_and_index(PDF1, meta, chunk_store, parent_store, splitter)
         assert n_parents >= 1, f"应有大块，实际 {n_parents}"
@@ -283,8 +298,12 @@ class TestIndexingAndRetrievalPipeline:
     def test_indexed_content_searchable(self, store_and_splitter):
         """索引后的文档内容应可通过 filter 检索到"""
         chunk_store, parent_store, splitter = store_and_splitter
-        meta = {"source": "CSDC", "category": "clearing_rule", "effective_date": "2026-06-01",
-                "file_path": str(PDF1)}
+        meta = {
+            "source": "CSDC",
+            "category": "clearing_rule",
+            "effective_date": "2026-06-01",
+            "file_path": str(PDF1),
+        }
 
         self._load_and_index(PDF1, meta, chunk_store, parent_store, splitter)
 
@@ -305,6 +324,7 @@ class TestIndexingAndRetrievalPipeline:
 # 4. Edge Cases & 特殊场景
 # ═══════════════════════════════════════════════════════════════
 
+
 class TestEdgeCases:
     """边界条件和异常场景"""
 
@@ -312,6 +332,7 @@ class TestEdgeCases:
     def test_long_filename(self):
         """含特殊字符的长文件名应正确解析"""
         from haystack.components.converters import PyPDFToDocument
+
         converter = PyPDFToDocument()
         # 文件名含括号、空格、中文标点
         result = converter.run(sources=[str(PDF1)])
@@ -320,6 +341,7 @@ class TestEdgeCases:
     def test_empty_meta_rejected(self):
         """空元数据应被拒绝"""
         from qa.pipelines.indexing import validate_meta
+
         missing = validate_meta({})
         assert len(missing) == 3
         assert "source" in missing
@@ -329,6 +351,7 @@ class TestEdgeCases:
     def test_partial_meta_rejected(self):
         """部分元数据应被拒绝"""
         from qa.pipelines.indexing import validate_meta
+
         missing = validate_meta({"source": "CSDC"})
         assert len(missing) == 2
         assert "category" in missing
@@ -349,6 +372,7 @@ class TestEdgeCases:
     def test_xlsx_multiple_sheets(self):
         """XLSX 应包含多个 sheet 和表格数据"""
         import openpyxl
+
         wb = openpyxl.load_workbook(str(XLSX), read_only=True, data_only=True)
         sheet_names = wb.sheetnames
         assert len(sheet_names) >= 1, "XLSX 至少应有一个 sheet"

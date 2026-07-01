@@ -75,8 +75,7 @@ class StoreManager:
         索引内容变化（增/删文档、重建）时版本号变化，未变更时稳定。
         用于 BM25 持久化索引的失效判定。
         """
-        if not self._initialized:
-            self.initialize()
+        self._ensure_initialized()
         if not self._version:
             self._version = self._compute_version()
         return self._version
@@ -100,6 +99,11 @@ class StoreManager:
     def invalidate_version(self) -> None:
         """强制下一次读取时重新计算版本号"""
         self._version = ""
+
+    def _ensure_initialized(self) -> None:
+        """确保已初始化（懒加载守卫）"""
+        if not self._initialized:
+            self.initialize()
 
     def initialize(self) -> None:
         """初始化向量存储（加载或新建）"""
@@ -148,9 +152,7 @@ class StoreManager:
 
         self._initialized = True
         logger.info(
-            f"StoreManager 初始化完成: "
-            f"bit_width={self.bit_width}, "
-            f"persist_path={self.persist_path}"
+            f"StoreManager 初始化完成: bit_width={self.bit_width}, persist_path={self.persist_path}"
         )
 
     # ─── 写入 ───────────────────────────────────────────────
@@ -161,8 +163,7 @@ class StoreManager:
         policy: DuplicatePolicy = DuplicatePolicy.SKIP,
     ) -> int:
         """写入小块文档到 chunk_store（用于向量检索）"""
-        if not self._initialized:
-            self.initialize()
+        self._ensure_initialized()
         result = self.chunk_store.write_documents(documents, policy=policy)
         self.invalidate_version()
         return result
@@ -173,8 +174,7 @@ class StoreManager:
         policy: DuplicatePolicy = DuplicatePolicy.SKIP,
     ) -> int:
         """写入大块文档到 parent_store（用于 LLM 上下文）"""
-        if not self._initialized:
-            self.initialize()
+        self._ensure_initialized()
         result = self.parent_store.write_documents(documents, policy=policy)
         self.invalidate_version()
         return result
@@ -188,42 +188,31 @@ class StoreManager:
         filters: dict | None = None,
     ) -> list[Document]:
         """从 chunk_store 检索最相似的文档"""
-        if not self._initialized:
-            self.initialize()
+        self._ensure_initialized()
         return self.chunk_store.embedding_retrieval(
             query_embedding=query_embedding,
             top_k=top_k,
             filters=filters,
         )
 
-    def get_parent_docs(
-        self, parent_ids: list[str]
-    ) -> list[Document]:
+    def get_parent_docs(self, parent_ids: list[str]) -> list[Document]:
         """根据 parent_id 批量获取父级文档"""
-        if not self._initialized:
-            self.initialize()
+        self._ensure_initialized()
 
         # parent_store 使用 filter_documents 按 id 过滤
         filters = {
             "operator": "OR",
-            "conditions": [
-                {"field": "id", "operator": "==", "value": pid}
-                for pid in parent_ids
-            ],
+            "conditions": [{"field": "id", "operator": "==", "value": pid} for pid in parent_ids],
         }
         return self.parent_store.filter_documents(filters=filters)
 
     def get_docs_by_ids(self, ids: list[str]) -> list[Document]:
         """按文档 ID 检索（跨两个 store 查找）"""
-        if not self._initialized:
-            self.initialize()
+        self._ensure_initialized()
 
         id_filter = {
             "operator": "OR",
-            "conditions": [
-                {"field": "id", "operator": "==", "value": doc_id}
-                for doc_id in ids
-            ],
+            "conditions": [{"field": "id", "operator": "==", "value": doc_id} for doc_id in ids],
         }
 
         # 先从 chunk_store 查
@@ -242,8 +231,7 @@ class StoreManager:
 
     def has_file_md5(self, file_md5: str) -> bool:
         """检查是否已存在指定 MD5 的文件"""
-        if not self._initialized:
-            self.initialize()
+        self._ensure_initialized()
         filters = {"field": "meta.file_md5", "operator": "==", "value": file_md5}
         # 只需检查 parent_store（原始文档级别）
         return len(self.parent_store.filter_documents(filters=filters)) > 0
@@ -252,8 +240,7 @@ class StoreManager:
 
     def delete_documents(self, ids: list[str]) -> int:
         """删除指定文档（两个 store 同时删除）"""
-        if not self._initialized:
-            self.initialize()
+        self._ensure_initialized()
         count = self.chunk_store.delete_documents(ids)
         count += self.parent_store.delete_documents(ids)
         if count > 0:
@@ -262,8 +249,7 @@ class StoreManager:
 
     def delete_by_filter(self, filters: dict) -> int:
         """按过滤条件删除文档"""
-        if not self._initialized:
-            self.initialize()
+        self._ensure_initialized()
         count = self.chunk_store.delete_by_filter(filters)
         count += self.parent_store.delete_by_filter(filters)
         if count > 0:
@@ -272,8 +258,7 @@ class StoreManager:
 
     def delete_all(self) -> int:
         """清空全部索引"""
-        if not self._initialized:
-            self.initialize()
+        self._ensure_initialized()
         c1 = self.chunk_store.delete_all_documents()
         c2 = self.parent_store.delete_all_documents()
         if c1 + c2 > 0:
@@ -308,8 +293,7 @@ class StoreManager:
 
     def get_status(self) -> IndexStatus:
         """获取知识库状态"""
-        if not self._initialized:
-            self.initialize()
+        self._ensure_initialized()
 
         chunk_count = self.chunk_store.count_documents()
         parent_count = self.parent_store.count_documents()
@@ -347,8 +331,7 @@ class StoreManager:
 
     def _count_unique_files(self) -> int:
         """按 file_md5 去重统计真实文件数"""
-        if not self._initialized:
-            self.initialize()
+        self._ensure_initialized()
         # 获取所有 parent 文档，提取 file_md5 去重
         docs = self.parent_store.filter_documents()
         md5_set = set()
@@ -371,8 +354,7 @@ class StoreManager:
 
     def get_unique_metadata_values(self, field: str) -> list[Any]:
         """获取元数据字段的唯一值列表"""
-        if not self._initialized:
-            self.initialize()
+        self._ensure_initialized()
         return self.parent_store.get_metadata_field_unique_values(field)
 
 

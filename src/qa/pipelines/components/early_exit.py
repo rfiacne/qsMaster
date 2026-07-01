@@ -44,6 +44,7 @@ class AliasQuestion:
         similarity_score: 与原始问题的语义相似度 (0~1)
         created_at: 创建时间
     """
+
     question: str = ""
     similarity_score: float = 0.0
     created_at: str = ""
@@ -61,6 +62,7 @@ class AuditEntry:
         operator: 操作人
         timestamp: 操作时间
     """
+
     action: str = ""
     field: str = ""
     old_value: str = ""
@@ -88,6 +90,7 @@ class StandardAnswer:
         created_at: 录入时间 (ISO datetime)
         updated_at: 更新时间 (ISO datetime)
     """
+
     id: str = ""
     question: str = ""
     answer: str = ""
@@ -108,17 +111,11 @@ class StandardAnswer:
         aliases_raw = data.get("aliases", [])
         aliases = []
         if isinstance(aliases_raw, list):
-            aliases = [
-                AliasQuestion(**a) if isinstance(a, dict) else a
-                for a in aliases_raw
-            ]
+            aliases = [AliasQuestion(**a) if isinstance(a, dict) else a for a in aliases_raw]
         audit_raw = data.get("audit_log", [])
         audit_log = []
         if isinstance(audit_raw, list):
-            audit_log = [
-                AuditEntry(**a) if isinstance(a, dict) else a
-                for a in audit_raw
-            ]
+            audit_log = [AuditEntry(**a) if isinstance(a, dict) else a for a in audit_raw]
         return cls(
             id=data.get("id", ""),
             question=data.get("question", ""),
@@ -303,25 +300,32 @@ class StandardAnswerStore:
             old_status = a.status
             a.status = status
             a.updated_at = time.strftime("%Y-%m-%dT%H:%M:%S")
-            a.audit_log.append(AuditEntry(
-                action=(
-                    "disable" if status == "disabled"
-                    else "enable" if status == "enabled"
-                    else "candidate"
-                ),
-                field="status",
-                old_value=old_status,
-                new_value=status,
-                operator=operator,
-                timestamp=a.updated_at,
-            ))
+            a.audit_log.append(
+                AuditEntry(
+                    action=(
+                        "disable"
+                        if status == "disabled"
+                        else "enable"
+                        if status == "enabled"
+                        else "candidate"
+                    ),
+                    field="status",
+                    old_value=old_status,
+                    new_value=status,
+                    operator=operator,
+                    timestamp=a.updated_at,
+                )
+            )
         self.save()
         logger.info(f"标准答案 {answer_id[:8]}... 状态: {old_status} → {status}")
         return True
 
     def add_alias(
-        self, answer_id: str, alias_question: str,
-        similarity_score: float = 1.0, operator: str = "system",
+        self,
+        answer_id: str,
+        alias_question: str,
+        similarity_score: float = 1.0,
+        operator: str = "system",
     ) -> bool:
         """为标准答案添加别名问题"""
         with self._lock:
@@ -340,14 +344,16 @@ class StandardAnswerStore:
             )
             a.aliases.append(alias)
             a.updated_at = alias.created_at
-            a.audit_log.append(AuditEntry(
-                action="add_alias",
-                field="aliases",
-                old_value="",
-                new_value=alias_question,
-                operator=operator,
-                timestamp=alias.created_at,
-            ))
+            a.audit_log.append(
+                AuditEntry(
+                    action="add_alias",
+                    field="aliases",
+                    old_value="",
+                    new_value=alias_question,
+                    operator=operator,
+                    timestamp=alias.created_at,
+                )
+            )
         self.save()
         logger.info(f"标准答案 {answer_id[:8]}... 添加别名: {alias_question[:40]}")
         return True
@@ -361,20 +367,21 @@ class StandardAnswerStore:
             normalized = StandardAnswerStore._normalize(alias_question)
             before = len(a.aliases)
             a.aliases = [
-                al for al in a.aliases
-                if StandardAnswerStore._normalize(al.question) != normalized
+                al for al in a.aliases if StandardAnswerStore._normalize(al.question) != normalized
             ]
             if len(a.aliases) == before:
                 return False
             a.updated_at = time.strftime("%Y-%m-%dT%H:%M:%S")
-            a.audit_log.append(AuditEntry(
-                action="remove_alias",
-                field="aliases",
-                old_value=alias_question,
-                new_value="",
-                operator="system",
-                timestamp=a.updated_at,
-            ))
+            a.audit_log.append(
+                AuditEntry(
+                    action="remove_alias",
+                    field="aliases",
+                    old_value=alias_question,
+                    new_value="",
+                    operator="system",
+                    timestamp=a.updated_at,
+                )
+            )
         self.save()
         return True
 
@@ -411,7 +418,7 @@ class StandardAnswerStore:
         for i, item in enumerate(items):
             try:
                 if not item.get("question") or not item.get("answer"):
-                    errors.append(f"第 {i+1} 条缺少 question 或 answer 字段")
+                    errors.append(f"第 {i + 1} 条缺少 question 或 answer 字段")
                     continue
 
                 answer = StandardAnswer.from_dict(item)
@@ -432,7 +439,7 @@ class StandardAnswerStore:
                     overwritten += 1
 
             except Exception as e:
-                errors.append(f"第 {i+1} 条导入失败: {e}")
+                errors.append(f"第 {i + 1} 条导入失败: {e}")
 
         if added + overwritten > 0:
             self.save()
@@ -461,6 +468,7 @@ class StandardAnswerStore:
         去除首尾空格、统一标点符号、全角转半角、小写化。
         """
         import re
+
         t = text.strip()
         # 全角转半角
         result = []
@@ -493,6 +501,7 @@ class StandardAnswerStore:
 @dataclass
 class MatchResult:
     """匹配结果"""
+
     matched: bool = False
     answer: StandardAnswer = field(default_factory=StandardAnswer)
     match_type: str = ""  # "exact" | "fuzzy"
@@ -609,12 +618,14 @@ class EarlyExitMatcher:
             # 先尝试精确匹配
             exact_hit = self._match_exact(normalized)
             if exact_hit is not None:
-                results.append(MatchResult(
-                    matched=True,
-                    answer=exact_hit,
-                    match_type="exact",
-                    score=1.0,
-                ))
+                results.append(
+                    MatchResult(
+                        matched=True,
+                        answer=exact_hit,
+                        match_type="exact",
+                        score=1.0,
+                    )
+                )
             else:
                 fuzzy_questions.append((i, q))
                 # 占位，稍后填充
@@ -733,8 +744,7 @@ class EarlyExitMatcher:
                 return
 
             fuzzy_answers = [
-                a for a in self.store.list_enabled()
-                if a.match_strategy in ("fuzzy", "both")
+                a for a in self.store.list_enabled() if a.match_strategy in ("fuzzy", "both")
             ]
 
             if not fuzzy_answers:
@@ -754,18 +764,17 @@ class EarlyExitMatcher:
                     questions.append(alias.question)
             try:
                 from qa.pipelines.components.embedder import embed_texts
+
                 embeddings = embed_texts(questions)
                 # 主问题嵌入
-                for answer, emb in zip(fuzzy_answers, embeddings[:len(fuzzy_answers)]):
+                for answer, emb in zip(fuzzy_answers, embeddings[: len(fuzzy_answers)]):
                     self._embedding_cache[answer.id] = emb
                 # 别名问题嵌入（通过预构建的 alias_index O(1) 查找）
                 for alias_text, (aid, idx) in alias_index.items():
                     if idx < len(embeddings):
                         cache_key = f"{aid}_alias_{hash(alias_text) % 100000}"
                         self._embedding_cache[cache_key] = embeddings[idx]
-                logger.info(
-                    f"模糊匹配索引构建完成: {len(fuzzy_answers)} 条标准答案"
-                )
+                logger.info(f"模糊匹配索引构建完成: {len(fuzzy_answers)} 条标准答案")
             except Exception as e:
                 logger.error(f"模糊匹配索引构建失败（将跳过模糊匹配）: {e}")
 
@@ -775,6 +784,7 @@ class EarlyExitMatcher:
         """嵌入单个问题"""
         try:
             from qa.pipelines.components.embedder import embed_query
+
             return embed_query(question)
         except Exception as e:
             logger.error(f"嵌入查询失败（模糊匹配跳过）: {e}")

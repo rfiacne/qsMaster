@@ -32,10 +32,9 @@ logger = logging.getLogger(__name__)
 # ─── 枚举 ───────────────────────────────────────────────
 
 
-
-
 class ReviewStatus(StrEnum):
     """审核状态"""
+
     PENDING = "pending"
     CORRECT = "correct"
     PARTIAL = "partial"
@@ -45,7 +44,8 @@ class ReviewStatus(StrEnum):
 
 class Priority(StrEnum):
     """审核优先级"""
-    HIGH = "high"      # Faithfulness FAIL
+
+    HIGH = "high"  # Faithfulness FAIL
     NORMAL = "normal"  # 常规问答
 
 
@@ -72,6 +72,7 @@ class ReviewItem:
         created_at: 入队时间
         archived_at: 归档时间
     """
+
     id: str = ""
     question: str = ""
     answer: str = ""
@@ -113,6 +114,7 @@ class ReviewItem:
 @dataclass
 class ReviewStats:
     """审核统计快照"""
+
     total: int = 0
     pending: int = 0
     correct: int = 0
@@ -174,9 +176,8 @@ class ReviewStore:
         """添加审核项"""
         if not item.id:
             import hashlib
-            item.id = hashlib.sha256(
-                f"{item.question}{time.time()}".encode()
-            ).hexdigest()[:16]
+
+            item.id = hashlib.sha256(f"{item.question}{time.time()}".encode()).hexdigest()[:16]
         item.created_at = item.created_at or time.strftime("%Y-%m-%dT%H:%M:%S")
         with self._lock:
             self._items[item.id] = item
@@ -230,9 +231,12 @@ class ReviewStore:
         reviewed_count = correct + partial + incorrect
         completion_rate = reviewed_count / total if total > 0 else 0.0
         return ReviewStats(
-            total=total, pending=pending,
-            correct=correct, partial=partial,
-            incorrect=incorrect, archived=archived,
+            total=total,
+            pending=pending,
+            correct=correct,
+            partial=partial,
+            incorrect=incorrect,
+            archived=archived,
             completion_rate=round(completion_rate, 4),
         )
 
@@ -350,10 +354,7 @@ class ReviewWorkflow:
                 logger.error(f"语义匹配自动入库失败: {e}")
 
         self.store.save()
-        logger.info(
-            f"审核标注完成: {item_id[:8]}... "
-            f"label={label}, reviewer={reviewer}"
-        )
+        logger.info(f"审核标注完成: {item_id[:8]}... label={label}, reviewer={reviewer}")
         return True
 
     def _auto_convert(
@@ -375,6 +376,7 @@ class ReviewWorkflow:
         if not enabled:
             # 没有现有标准答案，直接创建
             from qa.pipelines.components.early_exit import StandardAnswer
+
             new_a = StandardAnswer(
                 question=question,
                 answer="",
@@ -408,13 +410,13 @@ class ReviewWorkflow:
         if best_score >= self.semantic_threshold:
             # 添加为别名
             std_store.add_alias(
-                best_answer.id, question,
+                best_answer.id,
+                question,
                 similarity_score=best_score,
                 operator="review_auto",
             )
             logger.info(
-                f"语义匹配：添加别名 (score={best_score:.3f}) "
-                f"→ {best_answer.question[:30]}"
+                f"语义匹配：添加别名 (score={best_score:.3f}) → {best_answer.question[:30]}"
             )
         else:
             # 创建候选
@@ -434,19 +436,23 @@ class ReviewWorkflow:
         """嵌入问题文本"""
         try:
             from qa.pipelines.components.embedder import embed_query
+
             return embed_query(question)
         except Exception as e:
             logger.error(f"语义匹配嵌入失败: {e}")
             return None
 
     def _get_answer_embedding(
-        self, answer: Any, std_store: Any,
+        self,
+        answer: Any,
+        std_store: Any,
     ) -> list[float] | None:
         """获取标准答案的问题嵌入（缓存）"""
         if answer.id in self._embedding_cache:
             return self._embedding_cache[answer.id]
         try:
             from qa.pipelines.components.embedder import embed_query
+
             emb = embed_query(answer.question)
             self._embedding_cache[answer.id] = emb
             return emb

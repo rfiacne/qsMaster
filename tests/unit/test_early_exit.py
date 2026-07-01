@@ -210,6 +210,7 @@ class TestStandardAnswerStore:
             assert store2.get_by_question("Q").answer == "A"
         finally:
             import shutil
+
             shutil.rmtree(tmpdir)
 
 
@@ -304,20 +305,24 @@ class TestEarlyExitMatcher:
             self.store_path = tmpdir
             store = StandardAnswerStore(store_path=tmpdir)
             store.load()
-            store.add(StandardAnswer(
-                question="沪深交易所A股清算周期是多少？",
-                answer="T+1",
-                category="清算规则",
-                source="seed",
-                match_strategy="exact",
-            ))
-            store.add(StandardAnswer(
-                question="CCASS是什么？",
-                answer="中央结算及交收系统",
-                category="清算规则",
-                source="seed",
-                match_strategy="both",
-            ))
+            store.add(
+                StandardAnswer(
+                    question="沪深交易所A股清算周期是多少？",
+                    answer="T+1",
+                    category="清算规则",
+                    source="seed",
+                    match_strategy="exact",
+                )
+            )
+            store.add(
+                StandardAnswer(
+                    question="CCASS是什么？",
+                    answer="中央结算及交收系统",
+                    category="清算规则",
+                    source="seed",
+                    match_strategy="both",
+                )
+            )
             self.store = store
             yield
 
@@ -410,12 +415,12 @@ class TestEarlyExitMatcher:
         matcher = self.make_matcher(fuzzy_threshold=0.8)
         for a in self.store.list_all():
             if a.match_strategy in ("fuzzy", "both"):
-                matcher._embedding_cache[a.id] = [0.1, 0.2, 0.3]
+                matcher._embedding_cache[a.id] = [-0.1, -0.2, -0.3]  # 负方向向量
         matcher._index_built = True
 
-        # 设置 _embed_question 返回完全不相似的向量
+        # 设置 _embed_question 返回正方向向量（余弦 ≈ -0.926，远低于阈值）
         original_embed = matcher._embed_question
-        matcher._embed_question = lambda q: [0.9, 0.9, 0.9]  # 余弦相似度很低
+        matcher._embed_question = lambda q: [0.9, 0.9, 0.9]
         result = matcher.match("完全不相关的股票问题")
         assert result.matched is False
         matcher._embed_question = original_embed
@@ -423,11 +428,13 @@ class TestEarlyExitMatcher:
     def test_match_batch(self):
         """批量匹配应返回等长结果"""
         matcher = self.make_matcher()
-        results = matcher.match_batch([
-            "沪深交易所A股清算周期是多少？",
-            "未知问题",
-            "CCASS是什么？",
-        ])
+        results = matcher.match_batch(
+            [
+                "沪深交易所A股清算周期是多少？",
+                "未知问题",
+                "CCASS是什么？",
+            ]
+        )
         assert len(results) == 3
         assert results[0].matched is True
         assert results[1].matched is False

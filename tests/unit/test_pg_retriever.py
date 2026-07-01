@@ -26,8 +26,9 @@ class TestPgRetrieverInit:
         assert r.available is False  # not yet initialized
 
     def test_custom_config(self):
-        r = PgFullTextRetriever(host="10.0.0.1", port=5433, dbname="test",
-                                 user="admin", password="secret")
+        r = PgFullTextRetriever(
+            host="10.0.0.1", port=5433, dbname="test", user="admin", password="secret"
+        )
         assert r._config["host"] == "10.0.0.1"
         assert r._config["password"] == "secret"
 

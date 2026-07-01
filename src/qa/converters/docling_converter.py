@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import re
 from pathlib import Path
 
 from haystack import Document
@@ -96,9 +97,7 @@ class PaddleOCRBackend:
             )
             logger.info("PaddleOCR PP-OCRv6 模型加载完成")
         except ImportError:
-            raise ImportError(
-                "PaddleOCR 不可用，请安装: pip install paddlepaddle paddleocr"
-            )
+            raise ImportError("PaddleOCR 不可用，请安装: pip install paddlepaddle paddleocr")
 
     def recognize_page(self, image_bytes: bytes) -> str:
         """识别单页图片，返回按阅读顺序排列的文本"""
@@ -151,8 +150,42 @@ class OpenDataLoaderPDFConverter:
     def _check_available(self) -> None:
         try:
             import opendataloader_pdf  # noqa: F401
-            self._available = True
         except ImportError:
+            self._available = False
+            return
+
+        # 验证 Java 11+ 可用（ODL 需要 JVM）
+        import shutil
+        import subprocess
+
+        java_bin = shutil.which("java")
+        if java_bin is None:
+            logger.warning("OpenDataLoader 需要 Java 11+，未检测到 java 可执行文件")
+            self._available = False
+            return
+
+        try:
+            result = subprocess.run(
+                [java_bin, "-version"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            version_output = result.stderr or result.stdout
+            # java -version 输出格式示例: "java version \"23.0.2\" 2025-01-21"
+            match = re.search(r"(?:version\s+)?\"?(\d+)", version_output)
+            if match:
+                major_version = int(match.group(1))
+                if major_version >= 11:
+                    self._available = True
+                else:
+                    logger.warning(f"OpenDataLoader 需要 Java 11+，检测到 Java {major_version}")
+                    self._available = False
+            else:
+                logger.warning(f"无法解析 Java 版本: {version_output.strip()}")
+                self._available = False
+        except (subprocess.SubprocessError, OSError) as e:
+            logger.warning(f"Java 可用性检测失败: {e}")
             self._available = False
 
     def convert(self, file_path: str, meta: dict | None = None) -> list[Document]:
@@ -461,10 +494,7 @@ class DOCXConverter:
         try:
             import win32com.client
         except ImportError:
-            raise ValueError(
-                f"无法处理 .doc 文件: 需要 pywin32。"
-                f"请运行: pip install pywin32"
-            )
+            raise ValueError("无法处理 .doc 文件: 需要 pywin32。请运行: pip install pywin32")
 
         word = None
         doc_obj = None
@@ -597,10 +627,7 @@ class XLSXConverter:
 
             rows_text: list[str] = []
             for row in ws.iter_rows(values_only=True):
-                cells = [
-                    (str(cell) if cell is not None else "")
-                    for cell in row
-                ]
+                cells = [(str(cell) if cell is not None else "") for cell in row]
                 if any(c.strip() for c in cells):
                     rows_text.append("| " + " | ".join(cells) + " |")
 
@@ -707,6 +734,7 @@ class HTMLConverter:
     def _init_bs(self) -> None:
         try:
             import bs4  # noqa: F401
+
             self._bs_available = True
         except ImportError:
             self._bs_available = False
@@ -849,9 +877,7 @@ class FileRouter:
         self.txt_converter = TXTConverter()
         self.image_converter = ImageConverter()
 
-    def convert(
-        self, file_path: str, meta: dict | None = None
-    ) -> tuple[str, list[Document]]:
+    def convert(self, file_path: str, meta: dict | None = None) -> tuple[str, list[Document]]:
         """自动转换文件
 
         Returns:

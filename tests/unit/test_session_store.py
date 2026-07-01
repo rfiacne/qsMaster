@@ -154,6 +154,7 @@ class TestSessionStore:
     def test_persistence(self):
         import shutil
         import tempfile
+
         tmpdir = tempfile.mkdtemp()
         try:
             store1 = SessionStore(store_path=tmpdir)
@@ -173,6 +174,7 @@ class TestSessionStore:
 
     def test_clear_old(self):
         import time as tm
+
         s = self.store.create()
         old_time = tm.strftime("%Y-%m-%dT%H:%M:%S", tm.gmtime(tm.time() - 60 * 86400))
         s.updated_at = old_time
@@ -180,3 +182,78 @@ class TestSessionStore:
         removed = self.store.clear_old(max_days=30)
         assert removed == 1
         assert self.store.count() == 0
+
+
+class TestSlidingWindow:
+    """M4 FR-003: Sliding Window 截断"""
+
+    def test_sliding_window_by_turns(self):
+        """超过 max_turns 时自动丢弃最早轮次"""
+        s = Session(max_turns=5)
+        for i in range(8):
+            s.add_turn(f"问题{i}", f"回答{i}")
+        assert len(s.turns) == 5
+        assert s.turns[0].question == "问题3"
+
+    def test_sliding_window_by_tokens(self):
+        """超过 max_tokens 时自动截断"""
+        s = Session(max_turns=100, max_tokens=300)
+        for i in range(10):
+            s.add_turn(f"问题{i}" * 10, f"回答{i}" * 10)
+        # 应至少保留最后 1 轮
+        assert len(s.turns) >= 1
+        # 最后一轮应保留
+        assert "9" in s.turns[-1].question
+
+    def test_get_recent_turns_default_5(self):
+        """get_recent_turns 默认返回最近 5 轮"""
+        s = Session()
+        for i in range(10):
+            s.add_turn(f"Q{i}", f"A{i}")
+        recent = s.get_recent_turns()
+        assert len(recent) == 5
+        assert recent[-1].question == "Q9"
+
+    def test_context_text_format(self):
+        """上下文文本包含历史对话标记"""
+        s = Session()
+        s.add_turn("清算是什么？", "T+1清算制度")
+        s.add_turn("具体流程呢？", "资金划转和证券交收")
+        text = s.get_context_text(max_turns=5)
+        assert "[历史对话 1]" in text
+        assert "[历史对话 2]" in text
+        assert "清算" in text
+
+
+class TestSessionIsolation:
+    """M4 FR-005: 会话隔离"""
+
+    @pytest.fixture(autouse=True)
+    def setup(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self.store = SessionStore(store_path=tmpdir)
+            self.store.load()
+            yield
+
+    def test_sessions_isolated(self):
+        """不同会话的数据互不影响"""
+        s1 = self.store.create(title="会话1")
+        s2 = self.store.create(title="会话2")
+        s1.add_turn("会话1的问题", "会话1的回答")
+        s2.add_turn("会话2的问题", "会话2的回答")
+
+        r1 = self.store.get(s1.id)
+        r2 = self.store.get(s2.id)
+        assert r1.turns[0].question == "会话1的问题"
+        assert r2.turns[0].question == "会话2的问题"
+        assert len(r1.turns) == 1
+        assert len(r2.turns) == 1
+
+    def test_delete_one_does_not_affect_other(self):
+        """删除一个会话不影响其他会话"""
+        s1 = self.store.create(title="保留")
+        s2 = self.store.create(title="删除")
+        self.store.delete(s2.id)
+        assert self.store.get(s1.id) is not None
+        assert self.store.get(s2.id) is None
+        assert self.store.count() == 1

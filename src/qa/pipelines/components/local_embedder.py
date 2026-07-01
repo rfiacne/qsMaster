@@ -33,6 +33,7 @@ class LocalEmbedder:
             return
         try:
             from sentence_transformers import SentenceTransformer
+
             logger.info(f"正在加载本地嵌入模型: {self.model_name}")
             self._model = SentenceTransformer(
                 self.model_name,

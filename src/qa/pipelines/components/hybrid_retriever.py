@@ -94,29 +94,21 @@ class HybridRetriever:
             if self.bm25_index is not None and self.bm25_index.is_built:
                 bm25_results = self.bm25_index.retrieve(query_text, top_k=k)
                 if bm25_results:
-                    logger.info(
-                        f"混合检索: BM25 补充 {len(bm25_results)} 结果"
-                    )
+                    logger.info(f"混合检索: BM25 补充 {len(bm25_results)} 结果")
                     return bm25_results
             return []
 
         # ── 全量 BM25 检索（独立于向量结果） ──
         bm25_docs: list[Document] = []
         if self.bm25_index is not None and self.bm25_index.is_built:
-            bm25_docs = self.bm25_index.retrieve(
-                query_text, top_k=max(k * 3, 30)
-            )
-            logger.info(
-                f"全量 BM25 检索: {len(bm25_docs)} 结果"
-            )
+            bm25_docs = self.bm25_index.retrieve(query_text, top_k=max(k * 3, 30))
+            logger.info(f"全量 BM25 检索: {len(bm25_docs)} 结果")
 
         # ── PG 全文检索（可选，优先于 BM25） ──
         pg_text_map: dict[str, float] = {}
         if self.pg_retriever is not None and self.pg_retriever.available:
             try:
-                pg_results = self.pg_retriever.search(
-                    query_text, top_k=max(k * 3, 30)
-                )
+                pg_results = self.pg_retriever.search(query_text, top_k=max(k * 3, 30))
                 if pg_results:
                     for r in pg_results:
                         content_key = (r.get("content") or "")[:100]
@@ -125,9 +117,7 @@ class HybridRetriever:
                                 pg_text_map.get(content_key, 0.0),
                                 r["score"],
                             )
-                    logger.info(
-                        f"全文检索(PG): {len(pg_results)} 结果"
-                    )
+                    logger.info(f"全文检索(PG): {len(pg_results)} 结果")
             except Exception as e:
                 logger.warning(f"PG 检索异常，跳过: {e}")
 
@@ -170,9 +160,7 @@ class HybridRetriever:
                 else:
                     pg_scores_list.append(0.0)
             if any(s > 0 for s in pg_scores_list):
-                pg_sorted = sorted(
-                    enumerate(pg_scores_list), key=lambda x: -x[1]
-                )
+                pg_sorted = sorted(enumerate(pg_scores_list), key=lambda x: -x[1])
                 for rank_idx, (candidate_idx, _) in enumerate(pg_sorted):
                     doc_id = list(all_candidates.keys())[candidate_idx]
                     bm25_rank[doc_id] = rank_idx

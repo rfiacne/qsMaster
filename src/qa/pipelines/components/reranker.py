@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any
 
 import requests
 from haystack import Document
@@ -97,8 +96,10 @@ class Reranker:
 
         try:
             scores = self._call_rerank_api(
-                query=query, documents=doc_texts,
-                base_url=base_url, api_key=api_key,
+                query=query,
+                documents=doc_texts,
+                base_url=base_url,
+                api_key=api_key,
             )
         except Exception as e:
             logger.warning(f"Reranker 调用失败: {e}，回退到原始排序")
@@ -114,7 +115,7 @@ class Reranker:
             new_doc = dataclasses.replace(doc, score=score, meta=meta)
             scored.append(new_doc)
 
-        scored.sort(key=lambda x: -x.score)
+        scored.sort(key=lambda x: -(x.score or 0.0))
 
         result = scored[:k]
         elapsed = (time.time() - t0) * 1000
@@ -127,8 +128,11 @@ class Reranker:
         return result
 
     def _call_rerank_api(
-        self, query: str, documents: list[str],
-        base_url: str, api_key: str = "",
+        self,
+        query: str,
+        documents: list[str],
+        base_url: str,
+        api_key: str = "",
     ) -> list[float]:
         """调用远程 Reranker API
 
@@ -153,7 +157,9 @@ class Reranker:
 
         try:
             resp = self.session.post(
-                url, json=payload, headers=headers,
+                url,
+                json=payload,
+                headers=headers,
                 timeout=self.timeout,
             )
             resp.raise_for_status()

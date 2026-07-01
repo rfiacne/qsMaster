@@ -46,6 +46,7 @@ REQUIRED_META = {
 # 1. 文档加载测试
 # ═══════════════════════════════════════════════════════════════
 
+
 class TestDocumentLoading:
     """多格式文档解析"""
 
@@ -54,6 +55,7 @@ class TestDocumentLoading:
     def test_pdf_parsing(self):
         """PDF 文件应被成功解析为文本"""
         from haystack.components.converters import PyPDFToDocument
+
         converter = PyPDFToDocument()
         result = converter.run(sources=[str(PDF_SAMPLE)])
         docs = result["documents"]
@@ -61,25 +63,29 @@ class TestDocumentLoading:
         text = docs[0].content or ""
         assert len(text) > 100, f"PDF 解析文本过短: {len(text)} 字符"
         # 验证关键内容存在
-        assert any(kw in text for kw in ["全网测试", "结算系统", "深市"]), \
+        assert any(kw in text for kw in ["全网测试", "结算系统", "深市"]), (
             "PDF 内容中未找到预期关键词"
+        )
 
     @pytest.mark.skipif(not DOCX_SAMPLE.exists(), reason="测试 DOCX 文件不存在")
     def test_docx_parsing(self):
         """DOCX 文件应被成功解析"""
         import docx
+
         doc = docx.Document(str(DOCX_SAMPLE))
         paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
         text = "\n".join(paragraphs)
         assert len(text) > 100, f"DOCX 解析文本过短: {len(text)} 字符"
         # 验证合同类文档的关键内容
-        assert any(kw in text for kw in ["协议", "证券", "经纪", "基金"]), \
+        assert any(kw in text for kw in ["协议", "证券", "经纪", "基金"]), (
             "DOCX 内容中未找到预期关键词"
+        )
 
     @pytest.mark.skipif(not XLSX_SAMPLE.exists(), reason="测试 XLSX 文件不存在")
     def test_xlsx_parsing(self):
         """XLSX 文件应被成功解析为表格文本"""
         from haystack.components.converters import XLSXToDocument
+
         converter = XLSXToDocument()
         result = converter.run(sources=[str(XLSX_SAMPLE)])
         docs = result["documents"]
@@ -92,22 +98,25 @@ class TestDocumentLoading:
 # 2. 文档分割测试
 # ═══════════════════════════════════════════════════════════════
 
+
 class TestDocumentSplitting:
     """分层文档分割"""
 
     @pytest.fixture
     def splitter(self):
         from qa.pipelines.components.hierarchical_store import HierarchicalDocumentSplitter
+
         return HierarchicalDocumentSplitter(section_size=500, paragraph_size=100)
 
     def test_split_pdf_content(self, splitter):
         from haystack import Document
+
         doc = Document(
             id="test_doc",
             content=(  # noqa: E501
-            "中国结算深圳分公司发布通知。"
-            "关于2026年5月30日开展深市交易结算系统全网测试。"
-        ) * 20,
+                "中国结算深圳分公司发布通知。关于2026年5月30日开展深市交易结算系统全网测试。"
+            )
+            * 20,
             meta={"source": "CSDC", "category": "clearing_rule", "effective_date": "2026-06-01"},
         )
         result = splitter.run([doc])
@@ -123,11 +132,17 @@ class TestDocumentSplitting:
 
     def test_split_with_metadata_preserved(self, splitter):
         from haystack import Document
+
         doc = Document(
             id="doc2",
             content="测试内容段落。" * 30,
-            meta={"source": "SSE", "category": "tech_manual", "effective_date": "2026-05-01",
-                  "version": "2.0", "tags": ["测试", "技术"]},
+            meta={
+                "source": "SSE",
+                "category": "tech_manual",
+                "effective_date": "2026-05-01",
+                "version": "2.0",
+                "tags": ["测试", "技术"],
+            },
         )
         result = splitter.run([doc])
         for chunk in result["chunks"]:
@@ -141,31 +156,37 @@ class TestDocumentSplitting:
 # 3. 元数据验证测试
 # ═══════════════════════════════════════════════════════════════
 
+
 class TestMetadataValidation:
     """必需字段校验"""
 
     def test_valid_meta_passes(self):
         from qa.pipelines.indexing import validate_meta
+
         missing = validate_meta(REQUIRED_META)
         assert missing == []
 
     def test_missing_source(self):
         from qa.pipelines.indexing import validate_meta
+
         missing = validate_meta({"category": "rule", "effective_date": "2026-01-01"})
         assert "source" in missing
 
     def test_missing_category(self):
         from qa.pipelines.indexing import validate_meta
+
         missing = validate_meta({"source": "CSDC", "effective_date": "2026-01-01"})
         assert "category" in missing
 
     def test_missing_effective_date(self):
         from qa.pipelines.indexing import validate_meta
+
         missing = validate_meta({"source": "CSDC", "category": "rule"})
         assert "effective_date" in missing
 
     def test_all_missing(self):
         from qa.pipelines.indexing import validate_meta
+
         missing = validate_meta({})
         assert len(missing) == 3
 
@@ -173,6 +194,7 @@ class TestMetadataValidation:
 # ═══════════════════════════════════════════════════════════════
 # 4. 检索 + 排序测试
 # ═══════════════════════════════════════════════════════════════
+
 
 class TestRetrieval:
     """检索 + AutoMerging + 去重"""
@@ -211,24 +233,31 @@ class TestRetrieval:
             parent = Document(
                 id=f"p_{i}",
                 content=(  # noqa: E501
-            f"大块内容第{i+1}段。中国结算深圳分公司关于结算系统测试的通知。"
-            "测试内容包括交易系统、结算系统。"
-        ) * 5,
+                    f"大块内容第{i + 1}段。中国结算深圳分公司关于结算系统测试的通知。"
+                    "测试内容包括交易系统、结算系统。"
+                )
+                * 5,
                 meta={"file_path": f"test_{i}.pdf", "source": "CSDC", "category": "test"},
             )
             mgr.parent_store.write_documents([parent])
             for j in range(2):
                 chunk = Document(
                     id=f"c_{i}_{j}",
-                    content=f"小块内容 {i+1}-{j+1}。结算系统测试通知。",
-                    meta={"file_path": f"test_{i}.pdf", "parent_id": f"p_{i}",
-                          "source": "CSDC", "category": "test", "level": 2},
+                    content=f"小块内容 {i + 1}-{j + 1}。结算系统测试通知。",
+                    meta={
+                        "file_path": f"test_{i}.pdf",
+                        "parent_id": f"p_{i}",
+                        "source": "CSDC",
+                        "category": "test",
+                        "level": 2,
+                    },
                 )
                 mgr.chunk_store.write_documents([chunk])
         return mgr
 
     def test_auto_merging(self, store_manager):
         from qa.pipelines.querying import QueryPipeline
+
         pipeline = QueryPipeline(
             store_manager=store_manager,
             top_k=5,
@@ -241,6 +270,7 @@ class TestRetrieval:
 
     def test_source_dedup(self, store_manager):
         from qa.pipelines.querying import QueryPipeline
+
         pipeline = QueryPipeline(store_manager=store_manager)
         chunks = store_manager.chunk_store.filter_documents()
         sources = pipeline._build_sources(chunks)
@@ -252,6 +282,7 @@ class TestRetrieval:
 # ═══════════════════════════════════════════════════════════════
 # 5. 混合检索来源标注
 # ═══════════════════════════════════════════════════════════════
+
 
 class TestSourceTypeAnnotation:
     """检索结果来源类型标注"""
@@ -265,10 +296,18 @@ class TestSourceTypeAnnotation:
         class FakeStore:
             def retrieve(self, query_embedding, top_k=10, filters=None):
                 return [
-                    Document(id="a", content="Python 版本的相关信息。", score=0.9,
-                             meta={"file_path": "doc1.pdf"}),
-                    Document(id="b", content="Java 版本不相关的内容。", score=0.5,
-                             meta={"file_path": "doc2.pdf"}),
+                    Document(
+                        id="a",
+                        content="Python 版本的相关信息。",
+                        score=0.9,
+                        meta={"file_path": "doc1.pdf"},
+                    ),
+                    Document(
+                        id="b",
+                        content="Java 版本不相关的内容。",
+                        score=0.5,
+                        meta={"file_path": "doc2.pdf"},
+                    ),
                 ]
 
         hybrid = HybridRetriever(store_manager=FakeStore(), top_k=2)
@@ -287,26 +326,31 @@ class TestSourceTypeAnnotation:
 # 6. Early Exit 精确匹配
 # ═══════════════════════════════════════════════════════════════
 
+
 class TestEarlyExitIntegration:
     """Early Exit 精确匹配"""
 
     @pytest.fixture
     def std_store(self):
         from qa.pipelines.components.early_exit import StandardAnswer, StandardAnswerStore
+
         tmpdir = tempfile.mkdtemp()
         store = StandardAnswerStore(store_path=tmpdir)
         store.load()
-        store.add(StandardAnswer(
-            question="中国结算深市全网测试时间？",
-            answer="2026年5月30日",
-            category="clearing_rule",
-            source="seed",
-        ))
+        store.add(
+            StandardAnswer(
+                question="中国结算深市全网测试时间？",
+                answer="2026年5月30日",
+                category="clearing_rule",
+                source="seed",
+            )
+        )
         return store
 
     def test_exact_match(self, std_store):
         """精确匹配应返回标准答案"""
         from qa.pipelines.components.early_exit import EarlyExitMatcher
+
         matcher = EarlyExitMatcher(store_path=std_store.store_path, enabled=True)
         matcher.store = std_store
         result = matcher.match("中国结算深市全网测试时间？")
@@ -317,6 +361,7 @@ class TestEarlyExitIntegration:
     def test_normalized_match(self, std_store):
         """标准化后的精确匹配"""
         from qa.pipelines.components.early_exit import EarlyExitMatcher
+
         matcher = EarlyExitMatcher(store_path=std_store.store_path, enabled=True)
         matcher.store = std_store
         result = matcher.match("  中国结算深市全网测试时间？ ")

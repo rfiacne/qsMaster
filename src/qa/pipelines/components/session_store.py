@@ -33,6 +33,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class Turn:
     """单轮对话记录"""
+
     question: str = ""
     answer: str = ""
     sources: list[dict[str, Any]] = field(default_factory=list)
@@ -41,7 +42,7 @@ class Turn:
     def token_count(self) -> int:
         """估算 token 数（中文字符 ~1.5 token/字，英文 ~0.25 token/字符）"""
         text = f"{self.question} {self.answer}"
-        chinese_chars = sum(1 for c in text if '\u4e00' <= c <= '\u9fff')
+        chinese_chars = sum(1 for c in text if "\u4e00" <= c <= "\u9fff")
         other_chars = len(text) - chinese_chars
         return int(chinese_chars * 1.5 + other_chars * 0.25) + 100
 
@@ -60,6 +61,7 @@ class Session:
         title: 会话标题（从首轮问题自动生成）
         metadata: 扩展元数据（如过滤条件）
     """
+
     id: str = ""
     turns: list[Turn] = field(default_factory=list)
     max_turns: int = 10
@@ -69,8 +71,9 @@ class Session:
     title: str = ""
     metadata: dict[str, Any] = field(default_factory=dict)
 
-    def add_turn(self, question: str, answer: str,
-                 sources: list[dict[str, Any]] | None = None) -> None:
+    def add_turn(
+        self, question: str, answer: str, sources: list[dict[str, Any]] | None = None
+    ) -> None:
         """添加一轮对话并自动截断上下文"""
         turn = Turn(
             question=question,
@@ -115,6 +118,7 @@ class Session:
     @staticmethod
     def generate_id() -> str:
         import secrets
+
         return secrets.token_hex(6)  # 12-char hex, CSPRNG
 
     def to_dict(self) -> dict[str, Any]:
@@ -141,8 +145,7 @@ class SessionStore:
     使用 JSON 文件存储，支持 CRUD、最近列表、自动清理。
     """
 
-    def __init__(self, store_path: str = "./data/sessions",
-                 debounce_seconds: float = 5.0):
+    def __init__(self, store_path: str = "./data/sessions", debounce_seconds: float = 5.0):
         self.store_path = Path(store_path)
         self.sessions_file = self.store_path / "sessions.json"
         self._sessions: dict[str, Session] = {}
@@ -200,13 +203,13 @@ class SessionStore:
 
     def _write_all(self) -> None:
         data = [s.to_dict() for s in self._sessions.values()]
+        self.store_path.mkdir(parents=True, exist_ok=True)
         tmp_file = self.sessions_file.with_suffix(".tmp")
         with open(tmp_file, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
         tmp_file.replace(self.sessions_file)
 
-    def create(self, max_turns: int = 10, max_tokens: int = 4000,
-               title: str = "") -> Session:
+    def create(self, max_turns: int = 10, max_tokens: int = 4000, title: str = "") -> Session:
         """创建新会话"""
         session = Session(
             id=Session.generate_id(),
@@ -245,6 +248,7 @@ class SessionStore:
     def clear_old(self, max_days: int = 30) -> int:
         """清理超过保留天数的会话"""
         import time as time_mod
+
         now = time_mod.time()
         removed = 0
         with self._lock:
@@ -253,9 +257,7 @@ class SessionStore:
                 if not session.updated_at:
                     continue
                 try:
-                    updated = time_mod.strptime(
-                        session.updated_at, "%Y-%m-%dT%H:%M:%S"
-                    )
+                    updated = time_mod.strptime(session.updated_at, "%Y-%m-%dT%H:%M:%S")
                     age_days = (now - time_mod.mktime(updated)) / 86400
                     if age_days > max_days:
                         to_remove.append(sid)

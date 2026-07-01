@@ -42,7 +42,7 @@ class GlobalBM25Index:
         self,
         index: Any = None,
         documents: list[str] | None = None,
-        doc_metas: list[dict] | None = None,
+        doc_metas: list[dict[str, Any]] | None = None,
         version: str = "",
         persist_dir: str = DEFAULT_BM25_PERSIST_DIR,
     ):
@@ -324,7 +324,7 @@ def _get_all_chunks(store_manager: Any) -> list[Document]:
         if docs is None:
             docs = []
         logger.debug(f"_get_all_chunks: 获取到 {len(docs)} 个文档")
-        return docs
+        return docs  # type: ignore[no-any-return]
     except Exception as e:
         # 原备用分页路径调用同一 API 且未传 offset，会导致无限循环；
         # filter_documents 不支持分页参数，故直接返回空并记录错误。

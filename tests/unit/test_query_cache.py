@@ -102,3 +102,39 @@ def test_expired_entry_returns_none():
 
     time.sleep(0.02)
     assert cache.get("q", 5) is None
+
+
+def test_lru_eviction():
+    """LRU 淘汰策略：最久未访问的条目被驱逐"""
+    cache = QueryCache(max_size=3, store_manager=FakeStore())
+    cache.put("a", 5, result="ra")
+    cache.put("b", 5, result="rb")
+    cache.put("c", 5, result="rc")
+    # 访问 a 使其变为最近使用
+    cache.get("a", 5)
+    # 插入 d 应淘汰 b（最久未访问）
+    cache.put("d", 5, result="rd")
+    assert cache.get("a", 5) == "ra"
+    assert cache.get("b", 5) is None  # 被淘汰
+    assert cache.get("c", 5) == "rc"
+    assert cache.get("d", 5) == "rd"
+
+
+def test_stats_tracking():
+    """缓存统计：命中/未命中计数"""
+    cache = QueryCache(store_manager=FakeStore())
+    cache.put("q", 5, result="r")
+    cache.get("q", 5)  # hit
+    cache.get("q", 5)  # hit
+    cache.get("missing", 5)  # miss
+    assert cache.stats["hit_count"] >= 2
+    assert cache.stats["miss_count"] >= 1
+
+
+def test_different_top_k_separate_entries():
+    """不同 top_k 视为不同缓存条目"""
+    cache = QueryCache(store_manager=FakeStore())
+    cache.put("q", 5, result="r5")
+    cache.put("q", 10, result="r10")
+    assert cache.get("q", 5) == "r5"
+    assert cache.get("q", 10) == "r10"
