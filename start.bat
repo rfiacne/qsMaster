@@ -77,9 +77,10 @@ echo.
 curl -s http://127.0.0.1:8001/api/v1/qa/health >nul 2>&1
 if %errorlevel% neq 0 (
     echo Backend not running. Starting API server automatically...
-    start "QA Server" cmd /c ".venv\Scripts\python -m qa.api.server"
+    echo Log: server.log  (check this if the server doesn't start)
+    start "QA Server" cmd /c "set PYTHONIOENCODING=utf-8 && %~dp0.venv\Scripts\python.exe -m qa.api.server >> %~dp0server.log 2>&1"
     echo Waiting for server to start...
-    timeout /t 3 /nobreak >nul
+    timeout /t 5 /nobreak >nul
 )
 
 echo Opening http://127.0.0.1:8001 ...

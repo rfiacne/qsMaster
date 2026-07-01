@@ -19,7 +19,12 @@ test_upload.txt
 .serena/
 .specify/
 .codegraph/
-.venv/
+.rpiv/
+
+# Cache dirs
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 
 # Wiki submodules (keep git links, ignore content)
 wiki/
@@ -27,7 +32,7 @@ wiki/
 # OS
 Thumbs.db
 .DS_Store
-__pycache__/
+
 # CocoIndex Code (ccc)
 /.cocoindex_code/
 
@@ -36,3 +41,4 @@ __pycache__/
 .pi-lens/
 =2.0.0
 MagicMock/
+server.log

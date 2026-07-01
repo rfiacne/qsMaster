@@ -23,6 +23,11 @@ RUN pip install --no-cache-dir --prefix=/install .
 # ─── Stage 2: Runtime ────────────────────────────────────────
 FROM python:3.11-slim AS runtime
 
+# Install runtime utilities (curl for healthcheck)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
 # Security: run as non-root user
 RUN groupadd -r qa && useradd -r -g qa -G qa qa
 
@@ -50,9 +55,9 @@ ENV PYTHONUNBUFFERED=1 \
 # Expose port
 EXPOSE 8001
 
-# Health check
+# Health check (using curl for reliability in slim images)
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
-    CMD python -c "import requests; r = requests.get('http://localhost:8001/api/v1/qa/health'); exit(0 if r.status_code == 200 else 1)"
+    CMD curl -f http://localhost:8001/api/v1/qa/health || exit 1
 
 # Run the application
 CMD ["uvicorn", "qa.api.server:app", "--host", "0.0.0.0", "--port", "8001"]
