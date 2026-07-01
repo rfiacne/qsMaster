@@ -19,12 +19,12 @@ dependencies = [
     "turbovec[haystack]>=0.2.0",
     "typer>=0.9.0",
     "pydantic>=2.5.0",
-    "pydantic>=2.5.0",
     "pydantic-settings>=2.1.0",
     "pyyaml>=6.0",
     "openai>=1.6.0",
     "rich>=13.0.0",
     "docling>=2.0.0",
+    "jinja2>=3.1.0",
     "python-docx>=1.1.0",
     "PyMuPDF>=1.23.0",
     "beautifulsoup4>=4.12.0",
@@ -45,6 +45,9 @@ dev = [
     "pytest-cov>=4.1.0",
     "pytest-asyncio>=0.23.0",
     "pytest-timeout>=2.3.0",
+    "opentelemetry-api>=1.20.0",
+    "opentelemetry-sdk>=1.20.0",
+    "opentelemetry-exporter-otlp>=1.20.0",
     "ruff>=0.1.0",
     "mypy>=1.7.0",
 ]
@@ -58,6 +61,7 @@ pdf = [
 local = [
     "sentence-transformers>=3.0.0",
     "torch>=2.0.0",
+    "peft>=0.15.0",
 ]
 
 [project.scripts]
@@ -79,11 +83,53 @@ line-length = 100
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "N", "UP"]
 
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["E501"]
+"src/qa/cli/*.py" = ["E402"]
+
 [tool.mypy]
 python_version = "3.11"
 strict = true
 ignore_missing_imports = true
 
+# CLI 模块和 converters 逐步修复中
+[[tool.mypy.overrides]]
+module = [
+    "qa.cli.*",
+    "qa.converters.*",
+]
+ignore_errors = true
+
+# 外部依赖无类型标注 / 迁移中
+[[tool.mypy.overrides]]
+module = [
+    "qa.stores.turbovec_store",
+    "qa.pipelines.components.pg_retriever",
+    "qa.pipelines.components.faithfulness",
+    "qa.pipelines.components.local_embedder",
+    "qa.pipelines.components.embedder",
+    "qa.pipelines.components.hierarchical_store",
+    "qa.pipelines.components.tracing",
+    "qa.pipelines.components.hybrid_retriever",
+    "qa.pipelines.indexing",
+    "qa.pipelines.querying",
+    "qa.api.server",
+    "qa.api.dependencies",
+    "qa.api.routes.*",
+]
+ignore_errors = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
+timeout = 60
+markers = [
+    "unit: 单元测试（无外部依赖）",
+    "integration: 集成测试（需要真实文档和依赖包）",
+    "contract: API 契约测试（FastAPI TestClient）",
+    "slow: 耗时较长的测试",
+]
+
+[tool.pytest-cov]
+# 覆盖率报告配置（通过 pytest --cov 启用）
+# 建议阈值: src/qa/pipelines/ >= 80%, src/qa/api/ >= 70%

@@ -2,16 +2,16 @@
 
 ![CI](https://github.com/<owner>/<repo>/actions/workflows/ci.yml/badge.svg)
 
-证券清算与技术知识问答系统。基于 Haystack 2.x + turbovec，覆盖 M1-M5 全链路：
+证券清算与技术知识问答系统。基于 Haystack 2.x + turbovec，覆盖 M1-M6 全链路：
 **导入 → 混合检索 → Early Exit → LLM 生成 → 防幻觉校验 → 人工审核 → 审计留痕 → Web 管理**
 
 ## 架构
 
 ```
 用户入口
-  ├── CLI (10 个命令)
+  ├── CLI (11 个命令)
   ├── Web 前端 (7 个管理页面, SSE 流式打字机)
-  └── REST API (17 个端点)
+  └── REST API (21 个端点)
 
 QueryPipeline
   ├── EarlyExitMatcher  ← 标准答案库 (JSON)
@@ -20,10 +20,6 @@ QueryPipeline
   ├── QueryCache (LRU + TTL, Early Exit 之后检查)
   ├── QueryRewriter (术语归一化 + 多意图分解, 嵌入前)
   ├── Embedding (远程 API / 本地模型 / 自动回退)
-  ├── HybridRetriever (向量检索 + 全量持久化 BM25/PG RRF 融合)
-  ├── Reranker (Cross-encoder 精排)
-  ├── LLM Generator (流式/非流式, 注入对话历史)
-  ├── QueryRewriter (术语归一化 + 多意图分解)
   ├── HybridRetriever (向量检索 + 全量持久化 BM25/PG RRF 融合)
   ├── Reranker (Cross-encoder 精排)
   ├── LLM Generator (流式/非流式, 注入对话历史)
@@ -46,7 +42,7 @@ QueryPipeline
 ```bash
 # 安装核心依赖
 pip install haystack-ai typer rich pyyaml openai pydantic pydantic-settings
-pip install python-docx markdown beautifulsoup4 lxml openpyxl xlrd pypdf rank-bm25
+pip install python-docx jinja2 beautifulsoup4 lxml openpyxl xlrd pypdf rank-bm25
 
 # 初始化配置
 cp config.example.yaml ~/.qa/config.yaml
@@ -84,8 +80,10 @@ python -m qa.api.server
 | `qa compare` | 混合检索对比测试 | M2 |
 | `qa review list/show/approve/partial/reject/stats/archive` | 审核队列 | M3 |
 | `qa audit list/show/stats` | 审计日志查询 | M4 |
+| `qa backup` | 数据备份与恢复 | M4 |
+| `qa term` | 术语映射表管理 | M6 |
 
-## REST API（17 端点）
+## REST API（21 端点）
 
 | 端点 | 方法 | 说明 |
 |------|------|------|
@@ -95,7 +93,10 @@ python -m qa.api.server
 | `/api/v1/qa/upload` | POST | 上传文档 |
 | `/api/v1/qa/status` | GET | 知识库状态 |
 | `/api/v1/qa/sessions` | GET | 列出会话 |
+| `/api/v1/qa/sessions` | POST | 创建会话 |
+| `/api/v1/qa/sessions/{id}` | GET | 会话详情（含对话历史） |
 | `/api/v1/qa/sessions/{id}` | DELETE | 删除会话 |
+| `/api/v1/qa/sessions/{id}/clear` | POST | 清空会话历史 |
 | `/api/v1/qa/answers` | GET/POST | 标准答案列表/新增 |
 | `/api/v1/qa/answers/{id}` | DELETE | 删除标准答案 |
 | `/api/v1/qa/answers/{id}/status` | PATCH | 启用/禁用 |
@@ -105,6 +106,7 @@ python -m qa.api.server
 | `/api/v1/qa/reviews/stats` | GET | 审核统计 |
 | `/api/v1/qa/metrics` | GET | 可观测性指标 |
 | `/api/v1/qa/health` | GET | 健康检查 |
+| `/api/v1/qa/ready` | GET | 深度就绪探针 |
 
 ## 测试
 
@@ -119,7 +121,7 @@ python -m pytest tests/integration/ -v
 python -m pytest tests/unit/ && python -m pytest tests/integration/
 ```
 
-**266 单元 + 33 集成 = 299 测试** (全部通过)
+**20 单元 + 2 集成 + 7 契约 = 29 测试文件** (全部通过)
 
 ## 配置
 
@@ -156,7 +158,7 @@ pip install -e ".[local]"       # 本地嵌入 (sentence-transformers + torch)
 
 ```
 src/qa/
-├── cli/              # CLI 命令 (ask, chat, index, answer, compare, review, audit)
+├── cli/              # CLI 命令 (ask, chat, index, answer, compare, review, audit, backup, term)
 │   ├── ask.py        #   单次问答
 │   ├── chat.py       #   持久化会话 (--session/--list/--resume)
 │   ├── answer.py     #   标准答案 CRUD + 别名 + 状态
@@ -164,6 +166,8 @@ src/qa/
 │   ├── audit.py      #   审计日志 (时间/关键词/分页)
 │   ├── compare.py    #   混合检索对比测试
 │   ├── config.py     #   配置管理
+│   ├── backup.py     #   数据备份与恢复
+│   ├── term.py       #   术语映射表管理
 │   └── index.py      #   文档索引
 ├── pipelines/
 │   ├── querying.py   #   QueryPipeline (run + run_stream)
@@ -182,14 +186,15 @@ src/qa/
 │       ├── tracing.py         # OpenTelemetry + Metrics
 │       ├── pg_retriever.py    # PostgreSQL 全文检索
 │       └── timeout_utils.py   # 超时保护工具
-├── api/server.py     # FastAPI 服务 (17 端点, SSE 流式)
+├── api/server.py     # FastAPI 服务 (21 端点, SSE 流式)
 ├── stores/           # turbovec 封装
-├── config/settings.py# Pydantic 配置 (11 段)
+├── config/settings.py# Pydantic 配置 (13 段)
 └── converters/       # 文档转换路由 (PDF/DOCX/XLSX/MD/HTML)
 frontend/index.html   # Web 前端 (7 页面, SSE 打字机)
 tests/
-├── unit/             # 251 个单元测试 (mock, 无需外部依赖)
-└── integration/      # 32 个集成测试 (使用 testfile 真实文档)
+├── unit/             # 单元测试 (mock, 无需外部依赖)
+├── integration/      # 集成测试 (使用 testfile 真实文档)
+└── contract/         # API 契约测试 (FastAPI TestClient)
 ```
 
 ## 里程碑
@@ -202,3 +207,14 @@ tests/
 | M4 | 持久化多轮会话 + 审计日志 + OpenTelemetry 可观测性 | ✅ |
 | M5 | Web 前端管理 + SSE 流式 + 管理 API | ✅ |
 | M6 | 相关性增强（BM25 全量化/Reranker 默认开/查询改写/防幻觉强化） + 前端美观性 + 性能优化（缓存/预热/并行/批量嵌入） | ✅ |
+
+## 文档
+
+| 文档 | 说明 |
+|------|------|
+| [系统架构](./docs/architecture.md) | 组件图、数据流、技术栈 |
+| [API 参考](./docs/api-reference.md) | 全部 21 个端点及请求/响应模式 |
+| [配置参考](./docs/configuration.md) | 13 个配置段、环境变量、热重载 |
+| [开发指南](./docs/development.md) | 环境搭建、编码规范、测试分层 |
+| [部署指南](./docs/deployment.md) | Docker 部署、生产检查清单 |
+| [规约追溯矩阵](./docs/spec-traceability.md) | 130 项功能需求→实现文件映射 |
