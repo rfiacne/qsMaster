@@ -19,7 +19,9 @@ from __future__ import annotations
 import logging
 import secrets
 import time
+import uuid
 from collections import defaultdict
+from collections.abc import Awaitable, Callable
 from threading import Lock
 from typing import Annotated
 
@@ -192,11 +194,37 @@ def mask_key(key: str | None) -> str:
     return key[:4] + "****"
 
 
-async def log_request_middleware(request: Request, call_next) -> Response:
+def get_request_id(request: Request) -> str:
+    """获取或生成请求 ID（优先使用调用方传入的 X-Request-ID）"""
+    req_id = request.headers.get("X-Request-ID")
+    if not req_id:
+        req_id = str(uuid.uuid4())[:8]
+    request.state.request_id = req_id
+    return req_id
+
+
+def struct_log(
+    logger_instance: logging.Logger,
+    level: int,
+    message: str,
+    request_id: str = "",
+) -> None:
+    """结构化日志 — JSON 格式输出（带 request_id）"""
+    if request_id:
+        logger_instance.log(level, message, extra={"request_id": request_id})
+    else:
+        logger_instance.log(level, message)
+
+
+async def log_request_middleware(
+    request: Request,
+    call_next: Callable[[Request], Awaitable[Response]],
+) -> Response:
     """请求日志中间件
 
-    记录: method, path, api_key (masked), latency, status_code
+    记录: method, path, api_key (masked), latency, status_code, request_id
     """
+    req_id = get_request_id(request)
     start = time.time()
 
     # 提取 API key（不触发鉴权，仅用于日志）
@@ -212,11 +240,16 @@ async def log_request_middleware(request: Request, call_next) -> Response:
         response.headers["X-RateLimit-Limit"] = str(rl["limit"])
         response.headers["X-RateLimit-Remaining"] = str(rl["remaining"])
 
-    logger.info(
+    # 添加请求 ID 响应头
+    response.headers["X-Request-ID"] = req_id
+
+    struct_log(
+        logger,
+        logging.INFO,
         f"{request.method} {request.url.path} "
-        f"key={mask_key(api_key)} "
-        f"status={response.status_code} "
-        f"latency={latency_ms:.0f}ms"
+        f"key={mask_key(api_key)} status={response.status_code} "
+        f"latency={latency_ms:.1f}ms",
+        request_id=req_id,
     )
 
     return response

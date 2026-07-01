@@ -153,7 +153,9 @@ class TestRequireApiKey:
     def test_no_configured_keys_bypass(self, mock_settings_no_keys):
         """未配置 keys 时跳过鉴权"""
         import asyncio
+
         from fastapi import Request
+
         from qa.api.middleware import require_api_key
 
         request = mock.MagicMock(spec=Request)
@@ -164,7 +166,9 @@ class TestRequireApiKey:
     def test_valid_key_passes(self, mock_settings_with_keys):
         """有效 key 通过鉴权"""
         import asyncio
+
         from fastapi import Request
+
         from qa.api.middleware import require_api_key
 
         request = mock.MagicMock(spec=Request)
@@ -175,7 +179,9 @@ class TestRequireApiKey:
     def test_invalid_key_rejected(self, mock_settings_with_keys):
         """无效 key 返回 401"""
         import asyncio
+
         from fastapi import HTTPException, Request
+
         from qa.api.middleware import require_api_key
 
         request = mock.MagicMock(spec=Request)
@@ -188,7 +194,9 @@ class TestRequireApiKey:
     def test_missing_key_rejected(self, mock_settings_with_keys):
         """缺少 key 返回 401"""
         import asyncio
+
         from fastapi import HTTPException, Request
+
         from qa.api.middleware import require_api_key
 
         request = mock.MagicMock(spec=Request)
@@ -201,7 +209,9 @@ class TestRequireApiKey:
     def test_bypass_health(self, mock_settings_with_keys):
         """health 路径跳过鉴权"""
         import asyncio
+
         from fastapi import Request
+
         from qa.api.middleware import require_api_key
 
         request = mock.MagicMock(spec=Request)
@@ -212,7 +222,9 @@ class TestRequireApiKey:
     def test_bypass_status(self, mock_settings_with_keys):
         """status 路径跳过鉴权"""
         import asyncio
+
         from fastapi import Request
+
         from qa.api.middleware import require_api_key
 
         request = mock.MagicMock(spec=Request)
@@ -223,7 +235,9 @@ class TestRequireApiKey:
     def test_bypass_metrics(self, mock_settings_with_keys):
         """metrics 路径跳过鉴权"""
         import asyncio
+
         from fastapi import Request
+
         from qa.api.middleware import require_api_key
 
         request = mock.MagicMock(spec=Request)
@@ -234,7 +248,9 @@ class TestRequireApiKey:
     def test_bypass_docs(self, mock_settings_with_keys):
         """docs 路径跳过鉴权"""
         import asyncio
+
         from fastapi import Request
+
         from qa.api.middleware import require_api_key
 
         request = mock.MagicMock(spec=Request)
