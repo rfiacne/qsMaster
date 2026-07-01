@@ -4,6 +4,7 @@ Unit test shared fixtures — auto-cleanup sys.modules after each test
 Prevents test isolation bugs where module-level sys.modules pollution
 in one test file breaks subsequent tests (e.g. haystack, psycopg2).
 """
+
 from __future__ import annotations
 
 import sys
