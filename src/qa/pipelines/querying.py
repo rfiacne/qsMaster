@@ -119,6 +119,7 @@ class QueryPipeline:
         auto_merge_threshold: float = 0.5,
         use_hybrid: bool = True,
         hybrid_vector_weight: float = 0.5,
+        rrf_k: int = 35,
         prompt_template: str | None = None,
         reranker: Reranker | None = None,
         early_exit_matcher: Any | None = None,
@@ -148,6 +149,7 @@ class QueryPipeline:
             HybridRetriever(
                 store_manager=store_manager,
                 vector_weight=hybrid_vector_weight,
+                rrf_k=rrf_k,
                 top_k=top_k * 2,
                 bm25_index=bm25_index,
             )
@@ -192,7 +194,22 @@ class QueryPipeline:
         if self.store_manager.count_chunks() == 0:
             return {"error": "EMPTY_INDEX"}, None
 
-        # 0.5) Early Exit — 标准答案库匹配
+        # 0.5) 查询缓存 — 最先检查，命中则跳过 embedding 等所有后续开销
+        if enable_cache and self.query_cache is not None:
+            with tracer.start_span("query_cache_check") as span:
+                try:
+                    cached_result = self.query_cache.get(
+                        question=question, top_k=k, filters=filters
+                    )
+                    if cached_result is not None:
+                        logger.info(f"查询缓存命中: {question[:60]}")
+                        span.set_attribute("hit", "true")
+                        return {"cached": cached_result}, None
+                    span.set_attribute("hit", "false")
+                except Exception as e:
+                    logger.warning(f"查询缓存检查异常（不影响主流程）: {e}")
+
+        # 0.6) Early Exit — 标准答案库匹配（缓存未命中才走，需 embedding）
         if self.early_exit_matcher is not None and self.early_exit_matcher.is_enabled:
             with tracer.start_span("early_exit", {"question": question[:100]}) as span:
                 ee_result = self.early_exit_matcher.match(question)
@@ -220,21 +237,6 @@ class QueryPipeline:
                         )
                     ],
                 }, None
-
-        # 0.7) 查询缓存 — Early Exit 之后，改写/嵌入之前
-        if enable_cache and self.query_cache is not None:
-            with tracer.start_span("query_cache_check") as span:
-                try:
-                    cached_result = self.query_cache.get(
-                        question=question, top_k=k, filters=filters
-                    )
-                    if cached_result is not None:
-                        logger.info(f"查询缓存命中: {question[:60]}")
-                        span.set_attribute("hit", "true")
-                        return {"cached": cached_result}, None
-                    span.set_attribute("hit", "false")
-                except Exception as e:
-                    logger.warning(f"查询缓存检查异常（不影响主流程）: {e}")
 
         # 0.75) 查询改写（术语归一化 + 多意图分解）
         effective_question = question
@@ -427,36 +429,31 @@ class QueryPipeline:
                 span.set_status(f"error: {e}")
                 logger.error(f"LLM 生成失败: {e}")
 
-        # 6) Faithfulness 校验 — 检查回答是否有检索支撑
-        _original_answer = result.answer  # 保存原始回答，供降级/审核使用
+        # 6) Faithfulness 校验 — 异步执行，不阻塞响应返回
+        _original_answer = result.answer
         _should_skip_faithfulness = (
             result.answer is None
             or self.faithfulness_evaluator is None
             or result.from_standard_answer
             or self._is_low_risk_context(chunk_results, self.reranker is not None)
         )
-        if not _should_skip_faithfulness:
-            with tracer.start_span("faithfulness_check") as span:
-                try:
+
+        def _run_faithfulness_async():
+            """后台执行 faithfulness 校验、审核入队、审计日志"""
+            try:
+                with tracer.start_span("faithfulness_check_async") as span:
                     report = self.faithfulness_evaluator.evaluate(
                         question=question,
-                        answer=result.answer,
+                        answer=_original_answer,
                         context_docs=context_docs,
                     )
                     result.faithfulness = report.to_dict()
-                    # 保存原始回答用于审核入队（避免降级提示文本替代原始回答）
                     result.faithfulness["original_answer"] = _original_answer
 
                     if report.degraded:
                         logger.warning(
-                            "Faithfulness 校验不通过，回答降级: "
-                            f"支撑比例 {report.score:.2f}"
+                            f"Faithfulness 校验不通过 (异步): 支撑比例 {report.score:.2f}"
                             f" < 阈值 {self.faithfulness_evaluator.threshold}"
-                        )
-                        result.answer = (
-                            "根据当前知识库无法确认该问题的答案。\n\n"
-                            "以下为 LLM 原始生成内容（未经校验），请注意甄别：\n\n"
-                            f"{result.answer}"
                         )
                         metrics.record_faithfulness(passed=False)
                     else:
@@ -465,30 +462,45 @@ class QueryPipeline:
                     span.set_attribute("result", report.result.value if report else "unknown")
                     span.set_attribute("score", report.score if report else 0.0)
 
-                except Exception as e:
-                    span.set_status(f"error: {e}")
-                    logger.error(f"Faithfulness 校验异常（不影响回答输出）: {e}")
+                # 审核队列 — Faithfulness FAIL 自动入队
+                if (
+                    result.faithfulness
+                    and result.faithfulness.get("result") == "fail"
+                    and self.review_workflow is not None
+                ):
+                    try:
+                        self.review_workflow.add_item(
+                            question=question,
+                            answer=result.faithfulness.get(
+                                "original_answer", _original_answer or ""
+                            ),
+                            sources=[
+                                s.to_dict() if hasattr(s, "to_dict") else vars(s)
+                                for s in result.sources
+                            ],
+                            faithfulness_score=result.faithfulness.get("score", 0.0),
+                            faithfulness_result="fail",
+                            priority="high",
+                        )
+                        logger.info("问答已自动加入审核队列 (异步)")
+                    except Exception as e:
+                        logger.error(f"审核队列入队失败 (异步): {e}")
 
-        # 7) 审核队列 — Faithfulness FAIL 自动入队
-        if (
-            result.faithfulness
-            and result.faithfulness.get("result") == "fail"
-            and self.review_workflow is not None
-        ):
-            try:
-                self.review_workflow.add_item(
-                    question=question,
-                    answer=result.faithfulness.get("original_answer", _original_answer or ""),
-                    sources=[
-                        s.to_dict() if hasattr(s, "to_dict") else vars(s) for s in result.sources
-                    ],
-                    faithfulness_score=result.faithfulness.get("score", 0.0),
-                    faithfulness_result="fail",
-                    priority="high",
-                )
-                logger.info("问答已自动加入审核队列")
             except Exception as e:
-                logger.error(f"审核队列入队失败: {e}")
+                logger.error(f"Faithfulness 校验异常 (异步): {e}")
+
+        if not _should_skip_faithfulness:
+            # 启动后台线程执行 faithfulness
+            faithfulness_thread = threading.Thread(
+                target=_run_faithfulness_async,
+                name=f"faithfulness-{question[:20]}",
+                daemon=True,
+            )
+            faithfulness_thread.start()
+        else:
+            # 跳过 faithfulness，直接记录指标
+            if result.answer is not None:
+                metrics.record_faithfulness(passed=True)
 
         # 8) 审计日志 — 每笔问答记录
         if self.audit_store is not None:
@@ -566,12 +578,12 @@ class QueryPipeline:
         t0 = time.time()
         k = top_k or self.top_k
 
-        # 公共检索准备（流式模式禁用缓存和多意图分解）
+        # 公共检索准备（流式模式启用缓存，禁用多意图分解）
         early_result, retrieval_data = self._prepare(
             question=question,
             top_k=k,
             filters=filters,
-            enable_cache=False,
+            enable_cache=True,
             enable_multi_intent=False,
         )
 
@@ -582,6 +594,31 @@ class QueryPipeline:
                     "code": early_result["error"],
                     "message": early_result.get("message", ""),
                 }
+            elif "cached" in early_result:
+                # 缓存命中：直接输出缓存的 QueryResult
+                cached = early_result["cached"]
+                yield {"type": "meta", "from_standard_answer": False, "cached": True}
+                yield {"type": "token", "text": cached.answer or ""}
+                yield {
+                    "type": "sources",
+                    "sources": [
+                        {
+                            "file_name": s.file_name,
+                            "content": (s.content or "")[:200],
+                            "score": s.score,
+                            "source_type": getattr(s, "source_type", ""),
+                        }
+                        for s in (cached.sources or [])
+                    ],
+                }
+                if cached.faithfulness:
+                    yield {
+                        "type": "faithfulness",
+                        "result": cached.faithfulness.get("result", "unknown"),
+                        "score": cached.faithfulness.get("score", 0.0),
+                        "summary": cached.faithfulness.get("summary", ""),
+                    }
+                yield {"type": "done", "total_time_ms": (time.time() - t0) * 1000}
             elif early_result.get("early_exit"):
                 sources = [
                     {
@@ -795,11 +832,11 @@ class QueryPipeline:
     def _is_low_risk_context(chunk_results: list[Document], reranker_ran: bool = False) -> bool:
         """判断是否为低风险场景（可跳过 Faithfulness 校验）
 
-        低风险条件：Reranker 已执行且最高 rerank 分数 ≥ 0.95，
+        低风险条件：Reranker 已执行且最高 rerank 分数 ≥ 0.85，
         表示检索结果高度相关、幻觉风险低。
 
         仅在 Reranker 执行时判定：Reranker 输出的是 0-1 区间的绝对相关性
-        分数，0.95 阈值有明确含义。未启用 Reranker 时 chunk_results 的
+        分数，0.85 阈值有明确含义。未启用 Reranker 时 chunk_results 的
         score 是 RRF 归一化展示分数（最高值恒为 1.0），不反映绝对相关性，
         不能据此跳过校验，否则会导致所有混合检索结果都被误判为低风险。
         标准答案场景由 Early Exit 提前处理。
@@ -809,7 +846,7 @@ class QueryPipeline:
         if not reranker_ran:
             return False
         max_score = max((d.score or 0.0) for d in chunk_results)
-        return max_score >= 0.95
+        return max_score >= 0.85
 
     def _merge_chunks(self, chunks: list[Document]) -> list[Document]:
         """合并检索到的小块 → 获取父级大块

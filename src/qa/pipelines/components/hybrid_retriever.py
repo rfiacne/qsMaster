@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 from haystack import Document
 
@@ -81,28 +82,52 @@ class HybridRetriever:
         k = top_k or self.top_k
         t0 = time.time()
 
-        # ── 向量检索 ──
-        vector_results = self.store_manager.retrieve(
-            query_embedding=query_embedding,
-            top_k=max(k * 3, 30),
-            filters=filters,
-        )
+        # ── 向量检索 + BM25 检索（并行执行，两者完全独立） ──
+        use_bm25 = self.bm25_index is not None and self.bm25_index.is_built
+        vec_topk = max(k * 3, 30)
+
+        if use_bm25:
+            with ThreadPoolExecutor(max_workers=2) as ex:
+                vec_fut = ex.submit(
+                    self.store_manager.retrieve,
+                    query_embedding=query_embedding,
+                    top_k=vec_topk,
+                    filters=filters,
+                )
+                bm25_fut = ex.submit(
+                    self.bm25_index.retrieve, query_text, top_k=vec_topk
+                )
+                vector_results = vec_fut.result()
+                bm25_docs = bm25_fut.result() or []
+            logger.info(
+                f"并行检索完成: vector={len(vector_results)}, bm25={len(bm25_docs)}"
+            )
+        else:
+            vector_results = self.store_manager.retrieve(
+                query_embedding=query_embedding,
+                top_k=vec_topk,
+                filters=filters,
+            )
+            bm25_docs = []
 
         if not vector_results:
             logger.info("混合检索: 向量检索无结果")
             # 即使向量无结果，仍尝试 BM25 全量检索
-            if self.bm25_index is not None and self.bm25_index.is_built:
-                bm25_results = self.bm25_index.retrieve(query_text, top_k=k)
-                if bm25_results:
-                    logger.info(f"混合检索: BM25 补充 {len(bm25_results)} 结果")
-                    return bm25_results
+            if bm25_docs:
+                logger.info(f"混合检索: BM25 补充 {len(bm25_docs)} 结果")
+                return bm25_docs[:k]
             return []
 
-        # ── 全量 BM25 检索（独立于向量结果） ──
-        bm25_docs: list[Document] = []
-        if self.bm25_index is not None and self.bm25_index.is_built:
-            bm25_docs = self.bm25_index.retrieve(query_text, top_k=max(k * 3, 30))
-            logger.info(f"全量 BM25 检索: {len(bm25_docs)} 结果")
+        # ── 自适应权重：向量 top score 低时提升 BM25 权重 ──
+        effective_vector_weight = self.vector_weight
+        if vector_results:
+            vec_top_score = max((d.score or 0.0) for d in vector_results[:3])
+            if vec_top_score < 0.5:
+                effective_vector_weight = self.vector_weight * 0.5
+                logger.info(
+                    f"自适应权重: vec_top={vec_top_score:.3f} "
+                    f"→ vector_weight={effective_vector_weight:.2f}"
+                )
 
         # ── PG 全文检索（可选，优先于 BM25） ──
         pg_text_map: dict[str, float] = {}
@@ -174,7 +199,7 @@ class HybridRetriever:
             v_score = 1.0 / (self.rrf_k + v_rank + 1)
             b_score = 1.0 / (self.rrf_k + b_rank + 1)
 
-            fused = self.vector_weight * v_score + (1 - self.vector_weight) * b_score
+            fused = effective_vector_weight * v_score + (1 - effective_vector_weight) * b_score
             rrf_scores.append((doc_id, fused))
 
         # 按融合分数排序

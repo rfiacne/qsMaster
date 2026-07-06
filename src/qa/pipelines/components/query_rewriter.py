@@ -73,17 +73,21 @@ class QueryRewriter:
         model: str = "",
         timeout_seconds: float = 3.0,
         enabled: bool = True,
+        concept_disambig_enabled: bool = True,
     ):
         self.term_map_path = term_map_path
         self.model = model
         self.timeout_seconds = timeout_seconds
         self.enabled = enabled
+        self.concept_disambig_enabled = concept_disambig_enabled
         self._term_map: dict[str, str] = {}
         self._term_patterns: list[tuple[re.Pattern[str], str]] = []
+        # 概念消歧：pattern → replacement（长 pattern 优先匹配）
+        self._concept_patterns: list[tuple[re.Pattern[str], str]] = []
         self._load_term_map()
 
     def _load_term_map(self) -> None:
-        """加载术语映射表"""
+        """加载术语映射表和概念消歧规则"""
         path = Path(self.term_map_path)
         if not path.exists():
             logger.info(f"术语映射表不存在: {path}，跳过术语归一化")
@@ -92,6 +96,8 @@ class QueryRewriter:
         try:
             with open(path, encoding="utf-8") as f:
                 raw = json.load(f)
+
+            # ── 加载术语映射（mappings 区块或裸 dict） ──
             self._term_map = raw.get("mappings", raw)
             if not isinstance(self._term_map, dict):
                 logger.warning(f"术语映射表格式无效: {path}")
@@ -102,7 +108,31 @@ class QueryRewriter:
             self._term_patterns = [
                 (re.compile(re.escape(term)), self._term_map[term]) for term in sorted_terms
             ]
-            logger.info(f"术语映射表加载完成: {len(self._term_patterns)} 条映射")
+            logger.info(
+                f"术语映射表加载完成: {len(self._term_patterns)} 条映射"
+            )
+
+            # ── 加载概念消歧规则（concepts 区块，可选） ──
+            concepts = raw.get("concepts", {})
+            if concepts and isinstance(concepts, dict):
+                raw_patterns: list[tuple[str, str]] = []
+                for concept_name, concept_data in concepts.items():
+                    rewrite_patterns = concept_data.get("rewrite_patterns", [])
+                    for rp in rewrite_patterns:
+                        pattern_text = rp.get("pattern", "")
+                        replacement = rp.get("replacement", "")
+                        if pattern_text and replacement:
+                            raw_patterns.append((pattern_text, replacement))
+
+                # 长 pattern 优先匹配
+                raw_patterns.sort(key=lambda x: len(x[0]), reverse=True)
+                self._concept_patterns = [
+                    (re.compile(re.escape(pt)), repl) for pt, repl in raw_patterns
+                ]
+                if self._concept_patterns:
+                    logger.info(
+                        f"概念消歧规则加载完成: {len(self._concept_patterns)} 条"
+                    )
         except (json.JSONDecodeError, OSError) as e:
             logger.warning(f"术语映射表加载失败: {e}")
 
@@ -129,10 +159,16 @@ class QueryRewriter:
         # Step 1: 术语归一化
         normalized = self._normalize_terms(question)
 
+        # Step 1.5: 概念消歧（如 清算的结算方式 → 债券结算方式）
+        disambiguated = self._disambiguate_concepts(normalized)
+
         # Step 2: 判断是否需要 LLM 分解
-        if self._should_decompose(normalized):
+        was_normalized = normalized != question
+        was_disambiguated = disambiguated != normalized
+
+        if self._should_decompose(disambiguated):
             try:
-                sub_questions = self._decompose_with_llm(normalized)
+                sub_questions = self._decompose_with_llm(disambiguated)
                 if sub_questions and len(sub_questions) > 1:
                     # 成功分解多意图
                     result.sub_questions = sub_questions
@@ -141,30 +177,38 @@ class QueryRewriter:
                     result.was_rewritten = True
                     result.rewrite_method = "llm_decompose"
                 elif sub_questions and len(sub_questions) == 1:
-                    # LLM 判定为单一意图，用归一化后的文本
+                    # LLM 判定为单一意图，用消歧后的文本
                     result.rewritten = sub_questions[0]
-                    result.was_rewritten = normalized != question
+                    result.was_rewritten = True
                     result.rewrite_method = (
-                        "term_normalize" if result.was_rewritten else "passthrough"
+                        "concept_disambig" if was_disambiguated else
+                        "term_normalize" if was_normalized else "passthrough"
                     )
                 else:
-                    # 分解失败，回退到归一化文本
-                    result.rewritten = normalized
+                    # 分解失败，回退到消歧文本
+                    result.rewritten = disambiguated
+                    result.was_rewritten = was_normalized or was_disambiguated
                     result.rewrite_method = (
-                        "term_normalize" if normalized != question else "passthrough"
+                        "concept_disambig" if was_disambiguated else
+                        "term_normalize" if was_normalized else "passthrough"
                     )
             except Exception as e:
-                logger.warning(f"LLM 分解失败，回退原始问题: {e}")
+                logger.warning(f"LLM 分解失败，回退消歧文本: {e}")
                 result.error = str(e)
-                result.rewritten = normalized
+                result.rewritten = disambiguated
+                result.was_rewritten = was_normalized or was_disambiguated
                 result.rewrite_method = (
-                    "term_normalize" if normalized != question else "passthrough"
+                    "concept_disambig" if was_disambiguated else
+                    "term_normalize" if was_normalized else "passthrough"
                 )
         else:
-            # 单一意图透传
-            result.rewritten = normalized
-            result.was_rewritten = normalized != question
-            result.rewrite_method = "term_normalize" if result.was_rewritten else "passthrough"
+            # 单一意图透传（消歧后）
+            result.rewritten = disambiguated
+            result.was_rewritten = was_normalized or was_disambiguated
+            result.rewrite_method = (
+                "concept_disambig" if was_disambiguated else
+                "term_normalize" if was_normalized else "passthrough"
+            )
 
         result.rewrite_time_ms = (time.time() - t0) * 1000
 
@@ -191,6 +235,28 @@ class QueryRewriter:
 
         if result != text:
             logger.debug(f'术语归一化: "{text}" → "{result}"')
+
+        return result
+
+    def _disambiguate_concepts(self, text: str) -> str:
+        """概念消歧：处理清算/结算等近义但不同的术语
+
+        基于 term_map.json 中 "concepts" 区块定义的 rewrite_patterns，
+        对用户的提问进行概念级改写，使提问术语与文档术语对齐。
+
+        例如: "清算的结算方式有哪些" → "债券结算方式有哪些"
+
+        只有在 concept_disambig_enabled 且存在概念消歧规则时执行。
+        """
+        if not self.concept_disambig_enabled or not self._concept_patterns:
+            return text
+
+        result = text
+        for pattern, replacement in self._concept_patterns:
+            result = pattern.sub(replacement, result)
+
+        if result != text:
+            logger.info(f'概念消歧: "{text}" → "{result}"')
 
         return result
 
@@ -244,11 +310,14 @@ class QueryRewriter:
             logger.debug("查询改写: 未配置 LLM API 密钥，跳过多意图分解")
             return []
 
-        client = OpenAI(
-            api_key=api_key,
-            base_url=settings.llm.api_base_url,
-            timeout=self.timeout_seconds,
-        )
+        # 复用 OpenAI 客户端，避免每次请求重建连接池
+        if not hasattr(self, "_llm_client") or self._llm_client is None:
+            self._llm_client = OpenAI(
+                api_key=api_key,
+                base_url=settings.llm.api_base_url,
+                timeout=self.timeout_seconds,
+            )
+        client = self._llm_client
 
         system_prompt = (
             "你是一个证券清算领域的查询分析助手。你的任务是判断用户问题是否包含"
