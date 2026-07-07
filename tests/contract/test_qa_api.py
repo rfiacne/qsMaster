@@ -54,6 +54,11 @@ class TestAskEndpoint:
             }
             mock_pipeline = mock.MagicMock()
             mock_pipeline.run.return_value = mock_result
+
+            async def async_run_side(**kw):
+                return mock_pipeline.run(**kw)
+            mock_pipeline.async_run = async_run_side
+
             mock_get_pipe.return_value = mock_pipeline
 
             resp = client.post(
@@ -74,6 +79,11 @@ class TestAskEndpoint:
             mock_result.to_dict.return_value = {"answer": "结果", "sources": []}
             mock_pipeline = mock.MagicMock()
             mock_pipeline.run.return_value = mock_result
+
+            async def async_run_side(**kw):
+                return mock_pipeline.run(**kw)
+            mock_pipeline.async_run = async_run_side
+
             mock_get_pipe.return_value = mock_pipeline
 
             resp = client.post(
@@ -127,6 +137,11 @@ class TestSearchEndpoint:
 
             mock_pipeline = mock.MagicMock()
             mock_pipeline.run.return_value = mock_result
+
+            async def async_run_side(**kw):
+                return mock_pipeline.run(**kw)
+            mock_pipeline.async_run = async_run_side
+
             mock_get_pipe.return_value = mock_pipeline
 
             resp = client.post(
@@ -151,6 +166,11 @@ class TestSearchEndpoint:
 
             mock_pipeline = mock.MagicMock()
             mock_pipeline.run.return_value = mock_result
+
+            async def async_run_side(**kw):
+                return mock_pipeline.run(**kw)
+            mock_pipeline.async_run = async_run_side
+
             mock_get_pipe.return_value = mock_pipeline
 
             resp = client.post(

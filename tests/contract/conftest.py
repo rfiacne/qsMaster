@@ -1,7 +1,10 @@
 """
 契约测试共享 conftest — 统一 mock 外部依赖并创建 FastAPI TestClient
 
-所有 contract/ 下的测试文件共享此 fixture，避免每个文件重复 mock。
+改进:
+  - 用 mock_settings() 工厂替代 7 个独立 module-level patcher，消除维护脆弱性
+  - 所有 route 模块共享同一 settings mock (patch the underlying module reference)
+  - 每个测试独立使用 settings_mock fixture 进行 override
 """
 
 from __future__ import annotations
@@ -13,82 +16,83 @@ from unittest import mock
 
 import pytest
 
-# ─── 在导入 qa 模块之前完成所有 mock ──────────────────────
-
-# Mock embedder
-embedder_mock = mock.MagicMock()
-sys.modules["qa.pipelines.components.embedder"] = embedder_mock
-
-# Mock settings
-_settings_patcher = mock.patch("qa.config.settings.get_settings")
-_mock_settings = _settings_patcher.start()
-_mock_settings.return_value.llm.api_base_url = "http://test:8000/v1"
-_mock_settings.return_value.llm.resolved_api_key = "test-key"
-_mock_settings.return_value.llm.model = "test-model"
-_mock_settings.return_value.embedding.api_base_url = "http://test:8000/v1"
-_mock_settings.return_value.embedding.model = "test-model"
-_mock_settings.return_value.embedding.resolved_api_key = "test-key"
-_mock_settings.return_value.embedding.backend = "api"
-_mock_settings.return_value.early_exit.store_path = tempfile.mkdtemp()
-_mock_settings.return_value.vector_store.bit_width = 4
-_mock_settings.return_value.vector_store.similarity_function = "cosine"
-_mock_settings.return_value.vector_store.persist_path = tempfile.mkdtemp()
-# API gateway: no auth, no rate limit for tests
-_mock_settings.return_value.server.api_keys = []
-_mock_settings.return_value.server.rate_limit_rpm = 0
-_mock_settings.return_value.server.allowed_origins = ["*"]
-_mock_settings.return_value.server.host = "127.0.0.1"
-_mock_settings.return_value.server.port = 8001
-_mock_settings.return_value.server.reload = False
-_mock_settings.return_value.retrieval.min_score = 0.01
-_mock_settings.return_value.retrieval.use_hybrid = True
-_mock_settings.return_value.retrieval.block_sizes = [500, 100]
-_mock_settings.return_value.indexing.ocr_enabled = False
-_mock_settings.return_value.indexing.ocr_backend = "auto"
-_mock_settings.return_value.indexing.doc_timeout_seconds = 120
-_mock_settings.return_value.embedding.timeout_seconds = 30
-
-# Also mock get_settings in middleware module (it imports separately)
-_middleware_settings_patcher = mock.patch("qa.api.middleware.get_settings")
-_mock_middleware_settings = _middleware_settings_patcher.start()
-_mock_middleware_settings.return_value.server.api_keys = []
-_mock_middleware_settings.return_value.server.rate_limit_rpm = 0
-_mock_middleware_settings.return_value.server.allowed_origins = ["*"]
-
-# Mock routes qa.py get_settings
-_qa_routes_settings_patcher = mock.patch("qa.api.routes.qa.get_settings")
-_mock_qa_settings = _qa_routes_settings_patcher.start()
-_mock_qa_settings.return_value.retrieval.min_score = 0.01
-
-# Mock routes upload.py get_settings and validate_meta
-_upload_settings_patcher = mock.patch("qa.api.routes.upload.get_settings")
-_mock_upload_settings = _upload_settings_patcher.start()
-_mock_upload_settings.return_value.indexing.doc_timeout_seconds = 120
-_mock_upload_settings.return_value.embedding.timeout_seconds = 30
-
-# Mock routes ops.py get_settings
-_ops_settings_patcher = mock.patch("qa.api.routes.ops.get_settings")
-_mock_ops_settings = _ops_settings_patcher.start()
-_mock_ops_settings.return_value.embedding.api_base_url = "http://test:8000/v1"
-_mock_ops_settings.return_value.embedding.backend = "api"
-_mock_ops_settings.return_value.llm.model = "test-model"
-_mock_ops_settings.return_value.llm.api_base_url = "http://test:8000/v1"
-_mock_ops_settings.return_value.llm.resolved_api_key = "test-key"
-
-# Mock answers.py get_settings
-_answers_settings_patcher = mock.patch("qa.api.routes.answers.get_settings")
-_mock_answers_settings = _answers_settings_patcher.start()
-_mock_answers_settings.return_value.early_exit.store_path = tempfile.mkdtemp()
-
-# Mock reviews.py get_settings
-_reviews_settings_patcher = mock.patch("qa.api.routes.reviews.get_settings")
-_mock_reviews_settings = _reviews_settings_patcher.start()
-_mock_reviews_settings.return_value.early_exit.store_path = tempfile.mkdtemp()
-
-# Ensure src in path
+# 确保 src 在路径中
 _src_path = str(Path(__file__).resolve().parent.parent.parent / "src")
 if _src_path not in sys.path:
     sys.path.insert(0, _src_path)
+
+
+def default_mock_settings():
+    """创建完整的 mock Settings 对象
+
+    所有模块共享同一基值，测试可通过上下文管理器局部 override。
+    """
+    s = mock.MagicMock()
+    s.llm.api_base_url = "http://test:8000/v1"
+    s.llm.resolved_api_key = "test-key"
+    s.llm.model = "test-model"
+    s.llm.timeout_seconds = 30
+    s.llm.temperature = 0.0
+    s.llm.max_tokens = 2000
+    s.embedding.api_base_url = "http://test:8000/v1"
+    s.embedding.model = "test-model"
+    s.embedding.resolved_api_key = "test-key"
+    s.embedding.backend = "api"
+    s.embedding.timeout_seconds = 30
+    s.early_exit.store_path = tempfile.mkdtemp()
+    s.vector_store.bit_width = 4
+    s.vector_store.similarity_function = "cosine"
+    s.vector_store.persist_path = tempfile.mkdtemp()
+    s.server.api_keys = []
+    s.server.rate_limit_rpm = 0
+    s.server.allowed_origins = ["*"]
+    s.server.host = "127.0.0.1"
+    s.server.port = 8001
+    s.server.reload = False
+    s.retrieval.min_score = 0.01
+    s.retrieval.use_hybrid = True
+    s.retrieval.block_sizes = [500, 100]
+    s.retrieval.top_k = 5
+    s.retrieval.auto_merge_threshold = 0.5
+    s.retrieval.rrf_k = 35
+    s.indexing.ocr_enabled = False
+    s.indexing.ocr_backend = "auto"
+    s.indexing.doc_timeout_seconds = 120
+    s.faithfulness.enabled = False
+    s.rerank.enabled = False
+    s.query_rewrite.enabled = False
+    s.query_cache.enabled = False
+    s.otel.enabled = False
+    return s
+
+
+# 模块级 mock — 所有 route 模块导入时看到 mock 而非真实配置
+_mock_settings = default_mock_settings()
+_settings_patcher = mock.patch("qa.config.settings.get_settings", return_value=_mock_settings)
+_settings_patcher.start()
+
+# embedder 模块级 mock（避免导入 haystack/torch 依赖）
+sys.modules["qa.pipelines.components.embedder"] = mock.MagicMock()
+
+# mock 路由模块中的 get_settings (各模块 import 后持有独立引用)
+_modules_to_patch = [
+    "qa.api.middleware",
+    "qa.api.routes.qa",
+    "qa.api.routes.upload",
+    "qa.api.routes.ops",
+    "qa.api.routes.answers",
+    "qa.api.routes.reviews",
+    "qa.api.dependencies",
+]
+for _mod in _modules_to_patch:
+    _p = mock.patch(f"{_mod}.get_settings", return_value=_mock_settings)
+    _p.start()
+
+
+@pytest.fixture
+def settings_mock():
+    """返回当前共享的 mock settings，测试可局部 override"""
+    return _mock_settings
 
 
 @pytest.fixture
@@ -122,20 +126,16 @@ def client(review_tmpdir, answer_tmpdir, session_tmpdir):
     from qa.pipelines.components.review_queue import ReviewWorkflow
     from qa.pipelines.components.session_store import SessionStore
 
-    # Patch ReviewWorkflow
+    # Patch store paths to temp dirs
     original_review_init = ReviewWorkflow.__init__
+    original_session_init = SessionStore.__init__
+    original_answer_init = StandardAnswerStore.__init__
 
     def patched_review_init(self, store_path=review_tmpdir, **kwargs):
         original_review_init(self, store_path=review_tmpdir, **kwargs)
 
-    # Patch SessionStore
-    original_session_init = SessionStore.__init__
-
     def patched_session_init(self, store_path=session_tmpdir, **kwargs):
         original_session_init(self, store_path=session_tmpdir, **kwargs)
-
-    # Patch StandardAnswerStore
-    original_answer_init = StandardAnswerStore.__init__
 
     def patched_answer_init(self, store_path=answer_tmpdir, **kwargs):
         original_answer_init(self, store_path=answer_tmpdir, **kwargs)

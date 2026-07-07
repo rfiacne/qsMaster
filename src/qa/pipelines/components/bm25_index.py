@@ -15,6 +15,7 @@ import logging
 import os
 import pickle
 import re
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -25,6 +26,10 @@ logger = logging.getLogger(__name__)
 
 # 默认持久化根目录
 DEFAULT_BM25_PERSIST_DIR = "./data/bm25"
+
+# 并发锁：防止 load_or_build() 并发重建导致 pickle 损坏
+_build_lock = threading.Lock()
+_building = False
 
 
 class GlobalBM25Index:
@@ -205,6 +210,9 @@ def load_or_build(
 ) -> GlobalBM25Index:
     """加载或构建 BM25 全量索引
 
+    线程安全：使用 _build_lock 防止并发重建导致 pickle 损坏。
+    双重检查锁定模式：锁外快速路径 + 锁内二次确认。
+
     1. 检查持久化目录是否存在对应版本号的索引文件
     2. 若存在且版本匹配 → 从磁盘加载（快速）
     3. 若不存在或版本不匹配 → 从 store_manager 全量 chunk 构建
@@ -217,6 +225,7 @@ def load_or_build(
     Returns:
         GlobalBM25Index 实例
     """
+    global _building
     t0 = time.time()
 
     # 获取当前 store 版本号
@@ -227,13 +236,12 @@ def load_or_build(
 
     persist_path = Path(persist_dir) / f"{version}.pkl"
 
-    # 尝试从磁盘加载
+    # 快速路径：锁外检查，避免已持久化的索引仍需锁
     if persist_path.exists():
         try:
             with open(persist_path, "rb") as f:
                 data = pickle.load(f)
 
-            # 验证版本一致性
             loaded_version = data.get("version", "")
             if loaded_version == version:
                 index = GlobalBM25Index(
@@ -245,7 +253,8 @@ def load_or_build(
                 )
                 elapsed = (time.time() - t0) * 1000
                 logger.info(
-                    f"BM25 索引从磁盘加载完成: {index.total_docs} 文档, 耗时={elapsed:.0f}ms"
+                    f"BM25 索引从磁盘加载完成: "
+                    f"{index.total_docs} 文档, 耗时={elapsed:.0f}ms"
                 )
                 return index
             else:
@@ -259,53 +268,92 @@ def load_or_build(
         except Exception as e:
             logger.warning(f"BM25 索引加载异常，将重建: {e}")
 
-    # 构建：从 store_manager 获取全量 chunk
-    logger.info("BM25 全量索引构建中...")
-    build_t0 = time.time()
+    # 临界区：确保只有第一个线程执行重建
+    with _build_lock:
+        # 双重检查：持有锁后再次检查（可能另一个线程刚写入）
+        if persist_path.exists() and not _building:
+            try:
+                with open(persist_path, "rb") as f:
+                    data = pickle.load(f)
+                loaded_version = data.get("version", "")
+                if loaded_version == version:
+                    index = GlobalBM25Index(
+                        index=data["index"],
+                        documents=data.get("documents", []),
+                        doc_metas=data.get("doc_metas", []),
+                        version=version,
+                        persist_dir=persist_dir,
+                    )
+                    elapsed = (time.time() - t0) * 1000
+                    logger.info(
+                        f"BM25 索引从磁盘加载完成（锁后确认）: "
+                        f"{index.total_docs} 文档, 耗时={elapsed:.0f}ms"
+                    )
+                    return index
+            except Exception:
+                pass  # 损坏或版本不匹配，继续重建
 
-    # 获取所有 chunk 文档
-    all_chunks = _get_all_chunks(store_manager)
-    if not all_chunks:
-        logger.warning("知识库为空，返回空 BM25 索引")
-        return GlobalBM25Index(version=version, persist_dir=persist_dir)
+        if _building:
+            logger.warning(
+                "BM25 索引正在被其他线程构建，当前请求降级"
+            )
+            return GlobalBM25Index(version=version, persist_dir=persist_dir)
 
-    # 分词
-    tokenized_docs = [_tokenize_document(d.content or "") for d in all_chunks]
-    documents_text = [d.content or "" for d in all_chunks]
-    doc_metas = [dict(d.meta or {}) for d in all_chunks]
+        # 标记构建中
+        _building = True
 
-    # 补充 id 到 meta
-    for i, d in enumerate(all_chunks):
-        if d.id:
-            doc_metas[i]["id"] = d.id
-        doc_metas[i]["file_path"] = doc_metas[i].get("file_path", "")
-
-    # 构建 BM25Okapi
-    from rank_bm25 import BM25Okapi
-
-    bm25 = BM25Okapi(tokenized_docs)
-
-    build_elapsed = (time.time() - build_t0) * 1000
-    logger.info(f"BM25 索引构建完成: {len(documents_text)} 文档, 耗时={build_elapsed:.0f}ms")
-
-    index = GlobalBM25Index(
-        index=bm25,
-        documents=documents_text,
-        doc_metas=doc_metas,
-        version=version,
-        persist_dir=persist_dir,
-    )
-
-    # 持久化
     try:
-        index.save()
-    except Exception as e:
-        logger.error(f"BM25 索引持久化失败（不影响本次检索）: {e}")
+        # 构建：从 store_manager 获取全量 chunk
+        logger.info("BM25 全量索引构建中...")
+        build_t0 = time.time()
 
-    total_elapsed = (time.time() - t0) * 1000
-    logger.info(f"BM25 索引总耗时={total_elapsed:.0f}ms")
+        all_chunks = _get_all_chunks(store_manager)
+        if not all_chunks:
+            logger.warning("知识库为空，返回空 BM25 索引")
+            return GlobalBM25Index(version=version, persist_dir=persist_dir)
 
-    return index
+        tokenized_docs = [_tokenize_document(d.content or "") for d in all_chunks]
+        documents_text = [d.content or "" for d in all_chunks]
+        doc_metas = [dict(d.meta or {}) for d in all_chunks]
+
+        for i, d in enumerate(all_chunks):
+            if d.id:
+                doc_metas[i]["id"] = d.id
+            doc_metas[i]["file_path"] = doc_metas[i].get("file_path", "")
+
+        from rank_bm25 import BM25Okapi
+
+        bm25 = BM25Okapi(tokenized_docs)
+
+        build_elapsed = (time.time() - build_t0) * 1000
+        logger.info(
+            f"BM25 索引构建完成: {len(documents_text)} 文档, "
+            f"耗时={build_elapsed:.0f}ms"
+        )
+
+        index = GlobalBM25Index(
+            index=bm25,
+            documents=documents_text,
+            doc_metas=doc_metas,
+            version=version,
+            persist_dir=persist_dir,
+        )
+
+        try:
+            index.save()
+        except Exception as e:
+            logger.error(
+                f"BM25 索引持久化失败（不影响本次检索）: {e}"
+            )
+
+        total_elapsed = (time.time() - t0) * 1000
+        logger.info(f"BM25 索引总耗时={total_elapsed:.0f}ms")
+
+        return index
+    finally:
+        # 无论构建成功或失败，释放构建标志
+        with _build_lock:
+            _building = False
 
 
 def _get_all_chunks(store_manager: Any) -> list[Document]:

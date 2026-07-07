@@ -13,6 +13,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -66,6 +67,7 @@ class StoreManager:
         self.parent_store: Any = None  # TurboQuantDocumentStore
         self._initialized = False
         self._version: str = ""
+        self._init_lock = threading.Lock()
 
     @property
     def store_version(self) -> str:
@@ -101,9 +103,15 @@ class StoreManager:
         self._version = ""
 
     def _ensure_initialized(self) -> None:
-        """确保已初始化（懒加载守卫）"""
+        """确保已初始化（懒加载守卫）
+
+        双重检查锁定 (DCL)：锁外快速检查避免绝大多数已初始化场景的锁开销；
+        锁内二次确认防止并发调用 initialize() 导致双初始化。
+        """
         if not self._initialized:
-            self.initialize()
+            with self._init_lock:
+                if not self._initialized:
+                    self.initialize()
 
     def initialize(self) -> None:
         """初始化向量存储（加载或新建）"""

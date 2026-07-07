@@ -32,12 +32,14 @@ async def health():
 
 @router.get("/ready")
 async def readiness():
-    """就绪探针 — 深度检查依赖服务健康状况
+    """就绪探针 — 深度检查所有依赖服务健康状况
 
     Returns:
         200: 所有依赖正常
-        503: 依赖异常（返回异常详情）
+        503: 存在异常（返回异常详情）
     """
+    from qa.api.dependencies import get_bm25_index, get_query_pipeline
+
     checks: dict[str, Any] = {
         "status": "ok",
         "version": "0.1.0",
@@ -57,17 +59,14 @@ async def readiness():
         checks["checks"]["store"] = {"status": "error", "detail": str(e)}
         all_healthy = False
 
-    # 2) 检查嵌入服务（只做配置级检查，不实际调用 API）
+    # 2) 检查嵌入服务
     try:
         settings = get_settings()
-        if settings.embedding.api_base_url:
-            checks["checks"]["embedding"] = {
-                "status": "ok",
-                "backend": settings.embedding.backend,
-                "api_base": settings.embedding.api_base_url,
-            }
-        else:
-            checks["checks"]["embedding"] = {"status": "ok", "backend": "local"}
+        checks["checks"]["embedding"] = {
+            "status": "ok",
+            "backend": settings.embedding.backend,
+            "api_base": settings.embedding.api_base_url or "(local)",
+        }
     except Exception as e:
         checks["checks"]["embedding"] = {"status": "error", "detail": str(e)}
         all_healthy = False
@@ -83,6 +82,23 @@ async def readiness():
         }
     except Exception as e:
         checks["checks"]["llm"] = {"status": "error", "detail": str(e)}
+        all_healthy = False
+
+    # 4) 检查 BM25 索引（若启用混合检索）
+    try:
+        settings = get_settings()
+        if settings.retrieval.use_hybrid and chunk_count > 0:
+            bm25 = await asyncio.to_thread(get_bm25_index)
+            if bm25 is not None:
+                checks["checks"]["bm25"] = {
+                    "status": "ok",
+                    "is_built": bm25.is_built,
+                    "total_docs": bm25.total_docs,
+                }
+            else:
+                checks["checks"]["bm25"] = {"status": "ok", "is_built": False}
+    except Exception as e:
+        checks["checks"]["bm25"] = {"status": "error", "detail": str(e)}
         all_healthy = False
 
     if not all_healthy:

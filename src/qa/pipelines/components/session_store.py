@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import logging
+import sqlite3
 import threading
 import time
 from dataclasses import asdict, dataclass, field
@@ -142,72 +143,132 @@ class Session:
 class SessionStore:
     """会话持久化存储
 
-    使用 JSON 文件存储，支持 CRUD、最近列表、自动清理。
+    使用 SQLite 存储，行级写入，避免 JSON 全量写放大。
+    旧 JSON 文件 data/sessions/sessions.json 自动迁移到 db_path。
     """
 
     def __init__(self, store_path: str = "./data/sessions", debounce_seconds: float = 5.0):
-        self.store_path = Path(store_path)
-        self.sessions_file = self.store_path / "sessions.json"
-        self._sessions: dict[str, Session] = {}
-        self._lock = threading.Lock()
-        self._loaded = False
+        self._db_path = Path(store_path) / "sessions.db"
+        self._db_path.parent.mkdir(parents=True, exist_ok=True)
+        self._lock = threading.RLock()
+        self._conn: sqlite3.Connection | None = None
+        self._loaded = True  # SQLite always loaded
         self._dirty = False
         self._last_write = 0.0
         self._debounce_seconds = debounce_seconds
 
-    def load(self) -> None:
-        if self._loaded:
-            return
+        # 自动迁移旧 JSON 数据
+        json_path = Path(store_path) / "sessions.json"
+        if json_path.exists() and not self._db_path.exists():
+            try:
+                with open(json_path, encoding="utf-8") as f:
+                    raw = json.load(f)
+                if raw:
+                    self._migrate_from_json(raw)
+                    backup = json_path.with_suffix(".json.bak")
+                    json_path.rename(backup)
+                    logger.info(f"旧 JSON 会话数据已自动迁移到 SQLite: {json_path} → {self._db_path}")
+            except Exception as e:
+                logger.warning(f"JSON 会话自动迁移失败（跳过）: {e}")
+
+    def _get_conn(self) -> sqlite3.Connection:
+        if self._conn is None:
+            with self._lock:
+                if self._conn is None:
+                    self._conn = sqlite3.connect(
+                        str(self._db_path), check_same_thread=False
+                    )
+                    self._conn.row_factory = sqlite3.Row
+                    self._conn.execute("PRAGMA journal_mode=WAL")
+                    self._conn.execute("PRAGMA synchronous=NORMAL")
+                    self._conn.execute("""
+                        CREATE TABLE IF NOT EXISTS sessions (
+                            id TEXT PRIMARY KEY,
+                            turns TEXT NOT NULL DEFAULT '[]',
+                            max_turns INTEGER NOT NULL DEFAULT 10,
+                            max_tokens INTEGER NOT NULL DEFAULT 4000,
+                            created_at TEXT NOT NULL DEFAULT '',
+                            updated_at TEXT NOT NULL DEFAULT '',
+                            title TEXT NOT NULL DEFAULT '',
+                            metadata TEXT NOT NULL DEFAULT '{}'
+                        )
+                    """)
+                    self._conn.execute("""
+                        CREATE INDEX IF NOT EXISTS idx_sessions_updated
+                        ON sessions(updated_at)
+                    """)
+                    self._conn.commit()
+        return self._conn
+
+    def close(self) -> None:
         with self._lock:
-            if self._loaded:
-                return
-            if self.sessions_file.exists():
-                try:
-                    with open(self.sessions_file, encoding="utf-8") as f:
-                        raw = json.load(f)
-                    for item in raw:
-                        session = Session.from_dict(item)
-                        self._sessions[session.id] = session
-                    logger.info(f"会话存储加载完成: {len(self._sessions)} 个会话")
-                except (OSError, json.JSONDecodeError) as e:
-                    logger.error(f"会话存储加载失败: {e}")
-            else:
-                logger.info("会话存储为空")
-            self._loaded = True
+            if self._conn is not None:
+                self._conn.close()
+                self._conn = None
+
+    def _migrate_from_json(self, raw: list[dict]) -> None:
+        conn = self._get_conn()
+        for item in raw:
+            conn.execute(
+                """INSERT OR REPLACE INTO sessions
+                   (id, turns, max_turns, max_tokens, created_at, updated_at, title, metadata)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    item.get("id", ""),
+                    json.dumps(item.get("turns", []), ensure_ascii=False),
+                    item.get("max_turns", 10),
+                    item.get("max_tokens", 4000),
+                    item.get("created_at", ""),
+                    item.get("updated_at", ""),
+                    item.get("title", ""),
+                    json.dumps(item.get("metadata", {}), ensure_ascii=False),
+                ),
+            )
+        conn.commit()
+        logger.info(f"会话数据自动迁移完成: {len(raw)} 条记录")
+
+    def load(self) -> None:
+        """兼容原接口 — SQLite 无需加载到内存"""
+        pass
 
     def save(self, session: Session) -> None:
-        """保存单个会话（按 debounce 批量写盘，非每次 flush）"""
-        self.store_path.mkdir(parents=True, exist_ok=True)
+        """保存单个会话（行级写入）"""
+        self._db_path.parent.mkdir(parents=True, exist_ok=True)
+        data = json.dumps(
+            [asdict(t) for t in session.turns],
+            ensure_ascii=False,
+        )
+        meta = json.dumps(session.metadata, ensure_ascii=False)
         with self._lock:
-            self._sessions[session.id] = session
+            conn = self._get_conn()
+            conn.execute(
+                """INSERT OR REPLACE INTO sessions
+                   (id, turns, max_turns, max_tokens, created_at, updated_at, title, metadata)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    session.id,
+                    data,
+                    session.max_turns,
+                    session.max_tokens,
+                    session.created_at,
+                    session.updated_at,
+                    session.title,
+                    meta,
+                ),
+            )
+            conn.commit()
             self._dirty = True
             now = time.time()
             if now - self._last_write >= self._debounce_seconds:
-                self._write_all()
-                self._dirty = False
                 self._last_write = now
 
     def flush(self) -> None:
-        """强制持久化全部会话（exit 时调用）"""
-        with self._lock:
-            if self._dirty:
-                self._write_all()
-                self._dirty = False
-                self._last_write = time.time()
+        """兼容原接口 — SQLite 行级写入即时持久化"""
+        pass
 
     def save_all(self) -> None:
-        """持久化全部会话"""
-        self.store_path.mkdir(parents=True, exist_ok=True)
-        with self._lock:
-            self._write_all()
-
-    def _write_all(self) -> None:
-        data = [s.to_dict() for s in self._sessions.values()]
-        self.store_path.mkdir(parents=True, exist_ok=True)
-        tmp_file = self.sessions_file.with_suffix(".tmp")
-        with open(tmp_file, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-        tmp_file.replace(self.sessions_file)
+        """兼容原接口 — SQLite 单个保存即时落盘"""
+        pass
 
     def create(self, max_turns: int = 10, max_tokens: int = 4000, title: str = "") -> Session:
         """创建新会话"""
@@ -219,61 +280,76 @@ class SessionStore:
             created_at=time.strftime("%Y-%m-%dT%H:%M:%S"),
             updated_at=time.strftime("%Y-%m-%dT%H:%M:%S"),
         )
-        with self._lock:
-            self._sessions[session.id] = session
-            self._write_all()
+        self.save(session)
         logger.info(f"创建新会话: {session.id}")
         return session
 
     def get(self, session_id: str) -> Session | None:
         with self._lock:
-            return self._sessions.get(session_id)
+            conn = self._get_conn()
+            cur = conn.execute("SELECT * FROM sessions WHERE id = ?", (session_id,))
+            row = cur.fetchone()
+        if row is None:
+            return None
+        return self._row_to_session(row)
 
     def list_recent(self, limit: int = 10) -> list[Session]:
-        """列出最近的会话（按更新时间倒序）"""
         with self._lock:
-            sessions = list(self._sessions.values())
-        sessions.sort(key=lambda s: s.updated_at or "", reverse=True)
-        return sessions[:limit]
+            conn = self._get_conn()
+            cur = conn.execute(
+                "SELECT * FROM sessions ORDER BY updated_at DESC LIMIT ?", (limit,)
+            )
+            rows = cur.fetchall()
+        return [self._row_to_session(r) for r in rows]
 
     def delete(self, session_id: str) -> bool:
         with self._lock:
-            if session_id not in self._sessions:
-                return False
-            del self._sessions[session_id]
-            self._dirty = True
-            self._write_all()  # 删除操作立即持久化
-        return True
+            conn = self._get_conn()
+            cur = conn.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
+            conn.commit()
+        return cur.rowcount > 0
 
     def clear_old(self, max_days: int = 30) -> int:
-        """清理超过保留天数的会话"""
         import time as time_mod
 
         now = time_mod.time()
-        removed = 0
+        cutoff = time_mod.strftime(
+            "%Y-%m-%dT%H:%M:%S",
+            time_mod.gmtime(now - max_days * 86400),
+        )
         with self._lock:
-            to_remove = []
-            for sid, session in self._sessions.items():
-                if not session.updated_at:
-                    continue
-                try:
-                    updated = time_mod.strptime(session.updated_at, "%Y-%m-%dT%H:%M:%S")
-                    age_days = (now - time_mod.mktime(updated)) / 86400
-                    if age_days > max_days:
-                        to_remove.append(sid)
-                except (ValueError, OSError):
-                    continue
-            for sid in to_remove:
-                del self._sessions[sid]
-                removed += 1
-            if removed > 0:
-                self._write_all()
+            conn = self._get_conn()
+            cur = conn.execute(
+                "DELETE FROM sessions WHERE updated_at < ?", (cutoff,)
+            )
+            conn.commit()
+        removed = cur.rowcount
+        if removed > 0:
+            logger.info(f"会话清理: {removed} 个超过 {max_days} 天")
         return removed
 
     def count(self) -> int:
         with self._lock:
-            return len(self._sessions)
+            cur = self._get_conn().execute("SELECT COUNT(*) AS cnt FROM sessions")
+            row = cur.fetchone()
+        return row["cnt"] if row else 0
+
+    @staticmethod
+    def _row_to_session(row: sqlite3.Row) -> Session:
+        turns_raw = json.loads(row["turns"] or "[]")
+        turns = [Turn(**t) if isinstance(t, dict) else t for t in turns_raw]
+        meta_raw = json.loads(row["metadata"] or "{}")
+        return Session(
+            id=row["id"],
+            turns=turns,
+            max_turns=row["max_turns"],
+            max_tokens=row["max_tokens"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+            title=row["title"],
+            metadata=meta_raw,
+        )
 
     @property
     def is_loaded(self) -> bool:
-        return self._loaded
+        return True

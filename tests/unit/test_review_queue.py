@@ -362,13 +362,12 @@ class TestReviewStore:
         tmpdir = tempfile.mkdtemp()
         try:
             store1 = ReviewStore(store_path=tmpdir)
-            store1.load()
             store1.add(ReviewItem(question="Q", answer="A"))
-            store1.save()
+            store1.close()
 
             store2 = ReviewStore(store_path=tmpdir)
-            store2.load()
             assert store2.count() == 1
+            store2.close()
         finally:
             shutil.rmtree(tmpdir)
 
@@ -448,10 +447,13 @@ class TestReviewWorkflow:
         import time
 
         item_id = self.workflow.add_item(question="Q", answer="A")
-        # 设置创建时间为 100 天前
+        # 设置创建时间为 100 天前（通过 SQLite 直接 UPDATE）
         old_time = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(time.time() - 100 * 86400))
-        with self.workflow.store._lock:
-            self.workflow.store._items[item_id].created_at = old_time
+        self.workflow.store._get_conn().execute(
+            "UPDATE review_items SET created_at = ? WHERE id = ?",
+            (old_time, item_id),
+        )
+        self.workflow.store._get_conn().commit()
         archived = self.workflow.archive_old(max_days=30)
         assert archived == 1
         item = self.workflow.store.get(item_id)

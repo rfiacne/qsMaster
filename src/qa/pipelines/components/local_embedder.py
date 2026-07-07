@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +27,7 @@ class LocalEmbedder:
         self._task = task
         self._model = None
         self._dimension = 768  # jina-embeddings-v5-text-nano 的维度
+        self._encode_lock = threading.Lock()
 
     def _lazy_load(self):
         """延迟加载模型（首次调用时下载）"""
@@ -57,12 +59,16 @@ class LocalEmbedder:
     def encode(self, texts: list[str], task: str = "retrieval") -> list[list[float]]:
         """将文本列表转为嵌入向量
 
+        线程安全：SentenceTransformer 的 encode() 方法对同一模型的并发调用
+        可能导致崩溃或静默错误结果，故用 threading.Lock 保护。
+
         Args:
             texts: 文本列表
             task: jina v5 任务类型 (retrieval, text-matching, clustering, classification)
         """
         self._lazy_load()
-        embeddings = self._model.encode(texts, task=task, show_progress_bar=False)
+        with self._encode_lock:
+            embeddings = self._model.encode(texts, task=task, show_progress_bar=False)
         return [emb.tolist() for emb in embeddings]
 
     def encode_query(self, text: str) -> list[float]:

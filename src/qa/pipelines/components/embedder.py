@@ -33,16 +33,30 @@ def get_local_embedder():
     return _local_embedder
 
 
-def create_remote_client():
-    """创建远程 OpenAI 兼容客户端"""
-    settings = get_settings()
-    from openai import OpenAI
+# 全局 OpenAI 客户端单例（连接池复用，避免每次请求新建 TCP 连接）
+_remote_client = None
+_remote_client_lock = threading.Lock()
 
-    return OpenAI(
-        api_key=settings.embedding.resolved_api_key or settings.llm.resolved_api_key or "",
-        base_url=settings.embedding.api_base_url,
-        timeout=settings.embedding.timeout_seconds,
-    )
+
+def create_remote_client():
+    """创建远程 OpenAI 兼容客户端
+
+    全局单例，复用 HTTP 连接池（urllib3 keep-alive），
+    避免每次嵌入调用都进行 TCP 握手 + TLS 协商。
+    """
+    global _remote_client
+    if _remote_client is None:
+        with _remote_client_lock:
+            if _remote_client is None:
+                settings = get_settings()
+                from openai import OpenAI
+
+                _remote_client = OpenAI(
+                    api_key=settings.embedding.resolved_api_key or settings.llm.resolved_api_key or "",
+                    base_url=settings.embedding.api_base_url,
+                    timeout=settings.embedding.timeout_seconds,
+                )
+    return _remote_client
 
 
 def embed_texts(texts: list[str]) -> list[list[float]]:

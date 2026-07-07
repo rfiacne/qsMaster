@@ -44,7 +44,7 @@ async def ask(req: AskRequest, _auth=Depends(check_rate_limit)):
     """问答"""
     try:
         pipeline = get_query_pipeline()
-        result = pipeline.run(
+        result = await pipeline.async_run(
             question=req.question,
             top_k=req.top_k,
             filters=req.filters,
@@ -124,7 +124,7 @@ async def search(req: SearchRequest, _auth=Depends(check_rate_limit)):
     """知识库检索（仅检索，不生成回答）"""
     try:
         pipeline = get_query_pipeline()
-        result = pipeline.run(
+        result = await pipeline.async_run(
             question=req.query,
             top_k=req.top_k,
             no_llm=True,

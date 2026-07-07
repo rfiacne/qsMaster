@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import logging
+import sqlite3
 import threading
 import time
 from dataclasses import asdict, dataclass, field
@@ -133,101 +134,268 @@ class ReviewStats:
 class ReviewStore:
     """审核队列持久化存储
 
-    使用 JSON 文件存储，线程安全。
+    使用 SQLite 存储，行级写入，避免 JSON 全量写放大。
+    旧 JSON 文件 data/review_queue/items.json 自动迁移到 db_path。
     """
 
     def __init__(self, store_path: str = "./data/review_queue"):
-        self.store_path = Path(store_path)
-        self.items_file = self.store_path / "items.json"
-        self._items: dict[str, ReviewItem] = {}
-        self._lock = threading.Lock()
-        self._loaded = False
+        self._db_path = Path(store_path) / "review_queue.db"
+        self._db_path.parent.mkdir(parents=True, exist_ok=True)
+        self._lock = threading.RLock()
+        self._conn: sqlite3.Connection | None = None
+
+        # 自动迁移旧 JSON 数据
+        json_path = Path(store_path) / "items.json"
+        if json_path.exists() and not self._db_path.exists():
+            try:
+                with open(json_path, encoding="utf-8") as f:
+                    raw = json.load(f)
+                if raw:
+                    self._migrate_from_json(raw)
+                    backup = json_path.with_suffix(".json.bak")
+                    json_path.rename(backup)
+                    logger.info(f"旧 JSON 数据已自动迁移到 SQLite: {json_path} → {self._db_path}")
+            except Exception as e:
+                logger.warning(f"JSON 自动迁移失败（跳过）: {e}")
+
+    def _get_conn(self) -> sqlite3.Connection:
+        """获取 SQLite 连接（惰性初始化）"""
+        if self._conn is None:
+            with self._lock:
+                if self._conn is None:
+                    self._conn = sqlite3.connect(
+                        str(self._db_path), check_same_thread=False
+                    )
+                    self._conn.row_factory = sqlite3.Row
+                    self._conn.execute("PRAGMA journal_mode=WAL")
+                    self._conn.execute("PRAGMA synchronous=NORMAL")
+                    self._conn.execute("""
+                        CREATE TABLE IF NOT EXISTS review_items (
+                            id TEXT PRIMARY KEY,
+                            question TEXT NOT NULL,
+                            answer TEXT NOT NULL DEFAULT '',
+                            sources TEXT NOT NULL DEFAULT '[]',
+                            faithfulness_score REAL NOT NULL DEFAULT 0.0,
+                            faithfulness_result TEXT NOT NULL DEFAULT '',
+                            priority TEXT NOT NULL DEFAULT 'normal',
+                            status TEXT NOT NULL DEFAULT 'pending',
+                            label TEXT NOT NULL DEFAULT '',
+                            reviewer TEXT NOT NULL DEFAULT '',
+                            review_comment TEXT NOT NULL DEFAULT '',
+                            reviewed_at TEXT NOT NULL DEFAULT '',
+                            created_at TEXT NOT NULL DEFAULT '',
+                            archived_at TEXT NOT NULL DEFAULT ''
+                        )
+                    """)
+                    self._conn.execute("""
+                        CREATE INDEX IF NOT EXISTS idx_review_status
+                        ON review_items(status)
+                    """)
+                    self._conn.execute("""
+                        CREATE INDEX IF NOT EXISTS idx_review_label
+                        ON review_items(label)
+                    """)
+                    self._conn.commit()
+        return self._conn
+
+    def close(self) -> None:
+        with self._lock:
+            if self._conn is not None:
+                self._conn.close()
+                self._conn = None
+
+    def _migrate_from_json(self, raw: list[dict]) -> None:
+        """从 JSON 列表批量导入到 SQLite"""
+        conn = self._get_conn()
+        for item in raw:
+            conn.execute(
+                """INSERT OR REPLACE INTO review_items
+                   (id, question, answer, sources, faithfulness_score,
+                    faithfulness_result, priority, status, label,
+                    reviewer, review_comment, reviewed_at, created_at, archived_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    item.get("id", ""),
+                    item.get("question", ""),
+                    item.get("answer", ""),
+                    json.dumps(item.get("sources", []), ensure_ascii=False),
+                    item.get("faithfulness_score", 0.0),
+                    item.get("faithfulness_result", ""),
+                    item.get("priority", "normal"),
+                    item.get("status", "pending"),
+                    item.get("label", ""),
+                    item.get("reviewer", ""),
+                    item.get("review_comment", ""),
+                    item.get("reviewed_at", ""),
+                    item.get("created_at", ""),
+                    item.get("archived_at", ""),
+                ),
+            )
+        conn.commit()
+        logger.info(f"SQLite 迁移完成: {len(raw)} 条记录")
 
     def load(self) -> None:
-        if self._loaded:
-            return
-        with self._lock:
-            if self._loaded:
-                return
-            if self.items_file.exists():
-                try:
-                    with open(self.items_file, encoding="utf-8") as f:
-                        raw = json.load(f)
-                    self._items = {item["id"]: ReviewItem.from_dict(item) for item in raw}
-                    logger.info(f"审核队列加载完成: {len(self._items)} 项")
-                except (OSError, json.JSONDecodeError) as e:
-                    logger.error(f"审核队列加载失败: {e}")
-            else:
-                logger.info("审核队列为空，将自动创建")
-            self._loaded = True
+        """兼容原接口 — SQLite 无需加载到内存，空操作"""
+        pass
 
     def save(self) -> None:
-        self.store_path.mkdir(parents=True, exist_ok=True)
-        with self._lock:
-            data = [item.to_dict() for item in self._items.values()]
-            tmp_file = self.items_file.with_suffix(".tmp")
-            with open(tmp_file, "w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
-            tmp_file.replace(self.items_file)
+        """兼容原接口 — SQLite 行级写入即时持久化，空操作"""
+        pass
 
     # ─── CRUD ───────────────────────────────────────────────
 
     def add(self, item: ReviewItem) -> str:
-        """添加审核项"""
+        """添加审核项（行级 SQLite 写入）"""
         if not item.id:
             import hashlib
 
             item.id = hashlib.sha256(f"{item.question}{time.time()}".encode()).hexdigest()[:16]
         item.created_at = item.created_at or time.strftime("%Y-%m-%dT%H:%M:%S")
         with self._lock:
-            self._items[item.id] = item
-        self.save()
+            conn = self._get_conn()
+            conn.execute(
+                """INSERT OR REPLACE INTO review_items
+                   (id, question, answer, sources, faithfulness_score,
+                    faithfulness_result, priority, status, label,
+                    reviewer, review_comment, reviewed_at, created_at, archived_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    item.id,
+                    item.question,
+                    item.answer,
+                    json.dumps(item.sources, ensure_ascii=False),
+                    item.faithfulness_score,
+                    item.faithfulness_result,
+                    item.priority,
+                    item.status,
+                    item.label,
+                    item.reviewer,
+                    item.review_comment,
+                    item.reviewed_at,
+                    item.created_at,
+                    item.archived_at,
+                ),
+            )
+            conn.commit()
         return item.id
 
     def get(self, item_id: str) -> ReviewItem | None:
         with self._lock:
-            return self._items.get(item_id)
+            conn = self._get_conn()
+            cur = conn.execute(
+                "SELECT * FROM review_items WHERE id = ?", (item_id,)
+            )
+            row = cur.fetchone()
+        if row is None:
+            return None
+        return self._row_to_item(row)
 
     def list_all(self, status: str | None = None) -> list[ReviewItem]:
         with self._lock:
-            items = list(self._items.values())
-        if status:
-            if status in ("correct", "partial", "incorrect"):
-                # 按 label 字段过滤（用于审核标注查询）
-                items = [i for i in items if i.label == status]
-            elif status == "archived":
-                items = [i for i in items if i.status == "archived"]
+            conn = self._get_conn()
+            if status:
+                if status in ("correct", "partial", "incorrect"):
+                    cur = conn.execute(
+                        "SELECT * FROM review_items WHERE label = ? ORDER BY priority, created_at",
+                        (status,),
+                    )
+                elif status == "archived":
+                    cur = conn.execute(
+                        "SELECT * FROM review_items WHERE status = 'archived' ORDER BY priority, created_at"
+                    )
+                else:
+                    cur = conn.execute(
+                        "SELECT * FROM review_items WHERE status = ? ORDER BY priority, created_at",
+                        (status,),
+                    )
             else:
-                # pending / reviewed → 按 status 字段过滤
-                items = [i for i in items if i.status == status]
-        # 按优先级排序（HIGH 优先），再按时间倒序
-        priority_order = {"high": 0, "normal": 1}
-        items.sort(key=lambda i: (priority_order.get(i.priority, 9), i.created_at or ""))
-        return items
+                cur = conn.execute(
+                    "SELECT * FROM review_items ORDER BY priority, created_at"
+                )
+            rows = cur.fetchall()
+        return [self._row_to_item(r) for r in rows]
+
+    @staticmethod
+    def _row_to_item(row: sqlite3.Row) -> ReviewItem:
+        return ReviewItem(
+            id=row["id"],
+            question=row["question"],
+            answer=row["answer"],
+            sources=json.loads(row["sources"] or "[]"),
+            faithfulness_score=row["faithfulness_score"],
+            faithfulness_result=row["faithfulness_result"],
+            priority=row["priority"],
+            status=row["status"],
+            label=row["label"],
+            reviewer=row["reviewer"],
+            review_comment=row["review_comment"],
+            reviewed_at=row["reviewed_at"],
+            created_at=row["created_at"],
+            archived_at=row["archived_at"],
+        )
 
     def count(self) -> int:
         with self._lock:
-            return len(self._items)
+            cur = self._get_conn().execute("SELECT COUNT(*) AS cnt FROM review_items")
+            row = cur.fetchone()
+        return row["cnt"] if row else 0
 
     def remove(self, item_id: str) -> bool:
         with self._lock:
-            if item_id not in self._items:
-                return False
-            del self._items[item_id]
-        self.save()
-        return True
+            conn = self._get_conn()
+            cur = conn.execute("DELETE FROM review_items WHERE id = ?", (item_id,))
+            conn.commit()
+        return cur.rowcount > 0
+
+    def update(self, item: ReviewItem) -> None:
+        """更新审核项（行级 SQLite 写入）"""
+        with self._lock:
+            conn = self._get_conn()
+            conn.execute(
+                """UPDATE review_items SET
+                   answer=?, sources=?, faithfulness_score=?,
+                   faithfulness_result=?, priority=?, status=?, label=?,
+                   reviewer=?, review_comment=?, reviewed_at=?,
+                   created_at=?, archived_at=?
+                   WHERE id=?""",
+                (
+                    item.answer,
+                    json.dumps(item.sources, ensure_ascii=False),
+                    item.faithfulness_score,
+                    item.faithfulness_result,
+                    item.priority,
+                    item.status,
+                    item.label,
+                    item.reviewer,
+                    item.review_comment,
+                    item.reviewed_at,
+                    item.created_at,
+                    item.archived_at,
+                    item.id,
+                ),
+            )
+            conn.commit()
 
     def get_stats(self) -> ReviewStats:
-        """获取审核统计"""
         with self._lock:
-            items = list(self._items.values())
-        total = len(items)
-        pending = sum(1 for i in items if i.status == "pending")
-        correct = sum(1 for i in items if i.label == "correct")
-        partial = sum(1 for i in items if i.label == "partial")
-        incorrect = sum(1 for i in items if i.label == "incorrect")
-        archived = sum(1 for i in items if i.status == "archived")
-        # 完成率 = 已审核（correct + partial + incorrect）/ 总数，归档不计入完成
+            conn = self._get_conn()
+            cur = conn.execute("""
+                SELECT
+                    COUNT(*) AS total,
+                    SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END) AS pending,
+                    SUM(CASE WHEN label='correct' THEN 1 ELSE 0 END) AS correct,
+                    SUM(CASE WHEN label='partial' THEN 1 ELSE 0 END) AS partial,
+                    SUM(CASE WHEN label='incorrect' THEN 1 ELSE 0 END) AS incorrect,
+                    SUM(CASE WHEN status='archived' THEN 1 ELSE 0 END) AS archived
+                FROM review_items
+            """)
+            row = cur.fetchone()
+        total = row["total"] or 0
+        pending = row["pending"] or 0
+        correct = row["correct"] or 0
+        partial = row["partial"] or 0
+        incorrect = row["incorrect"] or 0
+        archived = row["archived"] or 0
         reviewed_count = correct + partial + incorrect
         completion_rate = reviewed_count / total if total > 0 else 0.0
         return ReviewStats(
@@ -242,7 +410,16 @@ class ReviewStore:
 
     @property
     def is_loaded(self) -> bool:
-        return self._loaded
+        return True
+
+    @property
+    def _dirty(self) -> bool:
+        """兼容旧 API — label() 和 archive_old() 仍设置此标志"""
+        return False
+
+    @_dirty.setter
+    def _dirty(self, val: bool) -> None:
+        pass  # SQLite 行级写入即时持久化，无需 dirty 标记
 
 
 # ─── 工作流 ───────────────────────────────────────────────
@@ -353,7 +530,7 @@ class ReviewWorkflow:
             except Exception as e:
                 logger.error(f"语义匹配自动入库失败: {e}")
 
-        self.store.save()
+        self.store.update(item)
         logger.info(f"审核标注完成: {item_id[:8]}... label={label}, reviewer={reviewer}")
         return True
 
@@ -483,11 +660,11 @@ class ReviewWorkflow:
                 if age_days > max_days:
                     item.status = "archived"
                     item.archived_at = time.strftime("%Y-%m-%dT%H:%M:%S")
+                    self.store.update(item)
                     archived += 1
             except (ValueError, OSError):
                 continue
         if archived > 0:
-            self.store.save()
             logger.info(f"审核队列归档: {archived} 项超过 {max_days} 天")
         return archived
 

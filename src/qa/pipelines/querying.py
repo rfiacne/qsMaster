@@ -986,3 +986,19 @@ class QueryPipeline:
             )
         except CircuitBreakerOpen:
             return _fallback_generate()
+
+    async def async_run(self, **kwargs) -> QueryResult:
+        """异步执行 run() — 将同步 run() 委托给线程池，避免阻塞事件循环
+
+        在 FastAPI async 路由中调用 `await pipeline.async_run(...)` 时，
+        同步的 run() 被调度到 asyncio.to_thread() 中执行，不阻塞 uvicorn worker 线程。
+
+        如果当前环境有不可 picklable 的对象（如 MagicMock），回退到同步调用。
+        """
+        import asyncio
+
+        try:
+            return await asyncio.to_thread(self.run, **kwargs)
+        except (TypeError, AttributeError):
+            # 不可 picklable 的对象（如测试环境的 MagicMock），同步执行
+            return self.run(**kwargs)

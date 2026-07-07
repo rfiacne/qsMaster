@@ -158,17 +158,17 @@ class TestSessionStore:
         tmpdir = tempfile.mkdtemp()
         try:
             store1 = SessionStore(store_path=tmpdir)
-            store1.load()
             s = store1.create(title="持久化测试")
             s.add_turn("Q", "A")
             store1.save(s)
+            store1.close()
 
             store2 = SessionStore(store_path=tmpdir)
-            store2.load()
             assert store2.count() == 1
             restored = store2.get(s.id)
             assert restored.title == "持久化测试"
             assert len(restored.turns) == 1
+            store2.close()
         finally:
             shutil.rmtree(tmpdir)
 
@@ -241,6 +241,8 @@ class TestSessionIsolation:
         s2 = self.store.create(title="会话2")
         s1.add_turn("会话1的问题", "会话1的回答")
         s2.add_turn("会话2的问题", "会话2的回答")
+        self.store.save(s1)
+        self.store.save(s2)
 
         r1 = self.store.get(s1.id)
         r2 = self.store.get(s2.id)

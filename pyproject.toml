@@ -103,7 +103,6 @@ ignore_errors = true
 # 外部依赖无类型标注 / 迁移中
 [[tool.mypy.overrides]]
 module = [
-    "qa.stores.turbovec_store",
     "qa.pipelines.components.pg_retriever",
     "qa.pipelines.components.faithfulness",
     "qa.pipelines.components.local_embedder",
