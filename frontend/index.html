@@ -1426,6 +1426,12 @@ async function addToStandardAnswer(msgId) {
   const msg = state.messages.find(m => m.id === msgId);
   if (!msg || !msg.content) return;
 
+  // 防止添加占位符文本（流式回答未完成）
+  if (msg.content === '<em>正在生成回答...</em>' || msg.content === '正在生成回答...') {
+    alert('请等待回答生成完成后再添加标准答案');
+    return;
+  }
+
   // 查找对应的问题（前一条 user 消息）
   const msgIndex = state.messages.findIndex(m => m.id === msgId);
   let question = '';
@@ -1556,6 +1562,9 @@ async function submitQuestion(question) {
   question = question.trim();
   if (!question) return;
   state.isProcessing = true; sendBtn.disabled = true; questionInput.disabled = true;
+  // 立即禁用按钮防止重复提交（async 函数在 await 前可能让出事件循环）
+  if (sendBtn) sendBtn.style.pointerEvents = 'none';
+  if (questionInput) questionInput.style.pointerEvents = 'none';
   addMessage('user', question);
   showStatus('searching', '正在检索相关文档...');
   setStatus('busy', '检索中');
@@ -1600,7 +1609,10 @@ async function submitQuestion(question) {
     showError(null, '请求失败: ' + err.message + '。请确认后端服务已启动。');
     setStatus('offline', '离线');
   }
-  state.isProcessing = false; sendBtn.disabled = false; questionInput.disabled = false; questionInput.focus();
+  state.isProcessing = false; sendBtn.disabled = false; questionInput.disabled = false;
+  if (sendBtn) sendBtn.style.pointerEvents = '';
+  if (questionInput) questionInput.style.pointerEvents = '';
+  questionInput.focus();
 }
 
 function saveToHistory(question, answer, sources) {

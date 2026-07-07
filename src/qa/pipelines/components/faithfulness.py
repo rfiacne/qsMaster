@@ -62,10 +62,16 @@ class ClaimCheck:
     """单条声明的校验结果"""
 
     claim: str = ""  # 原子声明文本
-    supported: bool = True  # 是否有检索支撑
+    supported: bool = True  # 是否有检索支撑（兼容旧字段）
+    support_level: str = "full"  # "full" | "partial" | "none"，tri-state 支撑等级
     confidence: float = 1.0  # 支撑置信度 (0~1)
     evidence: str = ""  # 支撑该声明的原文片段
     reason: str = ""  # 判断理由
+
+    def __post_init__(self) -> None:
+        """向后兼容：从 supported 推断 support_level"""
+        if self.support_level == "full" and not self.supported:
+            self.support_level = "none"
 
 
 @dataclass
@@ -145,6 +151,7 @@ class FaithfulnessEvaluator:
         max_context_chars: int = 800,
         judge_model: str = "",
         judge_api_base_url: str = "",
+        mode: str = "graded",
     ):
         """
         Args:
@@ -154,6 +161,9 @@ class FaithfulnessEvaluator:
             max_context_chars: 单个文档片段截断字符数（防止 token 超限）
             judge_model: 校验用模型名（空则复用 LLM 主模型）
             judge_api_base_url: 校验用独立 API 地址（空则复用 LLM 主地址）
+            mode: 校验模式: "graded"（加权，使用 confidence/support_level）|
+                          "strict"（二值，仅用 supported bool）|
+                          "disabled"
         """
         self.enabled = enabled
         self.threshold = max(0.0, min(1.0, threshold))
@@ -161,6 +171,7 @@ class FaithfulnessEvaluator:
         self.max_context_chars = max_context_chars
         self.judge_model = judge_model
         self.judge_api_base_url = judge_api_base_url
+        self.mode = mode
         self._llm_client = None
 
         # 回答级缓存：避免重复校验相同回答（线程安全）
@@ -232,14 +243,24 @@ class FaithfulnessEvaluator:
             checks, err = self._check_claims_batch(question, answer, claims, context_text)
 
             report.total_claims = len(checks)
-            report.supported_claims = sum(1 for c in checks if c.supported)
-            report.unsupported_claims = sum(1 for c in checks if not c.supported)
+            report.supported_claims = sum(
+                1 for c in checks if c.support_level in ("full", "partial")
+            )
+            report.unsupported_claims = sum(1 for c in checks if c.support_level == "none")
             report.claims = checks
             report.error = err
 
-            # 4) 计算得分
+            # 4) 计算得分（根据 mode 使用加权或二值评分）
             if report.total_claims > 0:
-                report.score = report.supported_claims / report.total_claims
+                if self.mode == "graded":
+                    # 加权评分：full=1.0, partial=0.5, none=0.0
+                    weights = {"full": 1.0, "partial": 0.5, "none": 0.0}
+                    report.score = (
+                        sum(weights.get(c.support_level, 0.0) for c in checks) / report.total_claims
+                    )
+                else:
+                    # strict 模式：纯布尔计数比（向后兼容）
+                    report.score = report.supported_claims / report.total_claims
 
             # 5) 判定结果
             if report.total_claims == 0:
@@ -410,8 +431,14 @@ class FaithfulnessEvaluator:
             "1. 只基于检索到的文档片段判断，不依赖自己的知识\n"
             "2. 支撑指文档片段中明确包含该声明的信息，或可以明确推理得出\n"
             "3. 如果声明包含引用前缀（如根据XX），忽略前缀，只看事实内容是否在文档中\n"
-            '4. 对每条声明输出 JSON 数组：[{"claim_idx": 0, "supported": true/false, '
+            '4. 对每条声明输出 JSON 数组：[{"claim_idx": 0, "support_level": "full", '
             '"evidence": "支撑的原文片段", "confidence": 0.0~1.0}]\n'
+            "   support_level 取值：\n"
+            '     "full"   = 文档明确包含此声明，或可明确推理得出（对应 confidence ≥ 0.7）\n'
+            '     "partial" = 文档部分提及或间接相关，但不完全明确'
+            "（对应 confidence 0.3~0.7）\n"
+            '     "none"   = 文档中完全不包含此声明的信息'
+            "（对应 confidence < 0.3）\n"
             "5. evidence 从文档片段中截取最相关的原文（含文件名），不超过 100 字\n"
             "6. confidence 表示支撑的可信度：1.0=明确支撑，0.7=可推理支撑，"
             "0.3=弱支撑或间接相关，0.0=完全不支撑\n"
@@ -465,15 +492,23 @@ class FaithfulnessEvaluator:
         for i, claim in enumerate(claims):
             item = result_map.get(i, {})
             supported = item.get("supported", True)
+            support_level = item.get("support_level", "")
             evidence = item.get("evidence", "")
             confidence = min(1.0, max(0.0, float(item.get("confidence", 0.5))))
             reason = item.get("reason", "")
+
+            # 向后兼容：旧格式 supported: true/false → support_level
+            if not support_level:
+                support_level = "full" if bool(supported) else "none"
+            elif support_level not in ("full", "partial", "none"):
+                support_level = "full"
 
             # 如果 LLM 没有返回结果，默认通过
             results.append(
                 ClaimCheck(
                     claim=claim,
-                    supported=bool(supported),
+                    supported=support_level in ("full", "partial"),
+                    support_level=support_level,
                     confidence=confidence,
                     evidence=evidence[:300] if evidence else "",
                     reason=reason,

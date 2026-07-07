@@ -541,6 +541,7 @@ class EarlyExitMatcher:
         self.store = StandardAnswerStore(store_path)
         self.fuzzy_threshold = fuzzy_threshold
         self.enabled = enabled
+        self.store.load()
 
         # 嵌入缓存：question_hash → embedding
         self._embedding_cache: dict[str, list[float]] = {}

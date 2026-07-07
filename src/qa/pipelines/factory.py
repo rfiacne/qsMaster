@@ -39,6 +39,7 @@ def _build_faithfulness(settings: Settings) -> Any | None:
         max_claims=settings.faithfulness.max_claims,
         judge_model=settings.faithfulness.judge_model,
         judge_api_base_url=settings.faithfulness.judge_api_base_url,
+        mode=settings.faithfulness.mode,
     )
 
 
@@ -65,6 +66,7 @@ def build_query_rewriter(settings: Settings) -> Any | None:
         model=settings.query_rewrite.model,
         timeout_seconds=settings.query_rewrite.timeout_seconds,
         enabled=settings.query_rewrite.enabled,
+        concept_disambig_enabled=settings.query_rewrite.concept_disambig_enabled,
     )
 
 
@@ -187,6 +189,7 @@ def build_query_pipeline(
         auto_merge_threshold=settings.retrieval.auto_merge_threshold,
         use_hybrid=settings.retrieval.use_hybrid,
         hybrid_vector_weight=settings.retrieval.hybrid_vector_weight,
+        rrf_k=settings.retrieval.rrf_k,
         reranker=reranker,
         early_exit_matcher=early_exit_matcher,
         faithfulness_evaluator=faithfulness_evaluator,

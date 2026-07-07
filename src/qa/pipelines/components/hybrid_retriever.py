@@ -13,12 +13,31 @@ M6 增强：
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 
 from haystack import Document
 
 from qa.pipelines.components.bm25_index import GlobalBM25Index, _tokenize
+
+# 复用的检索线程池：避免每次查询都创建/销毁 ThreadPoolExecutor 带来的线程抖动。
+# 默认 4 个工作线程，可在并发查询时共享，同时限制资源上限。
+_RETRIEVAL_EXECUTOR: ThreadPoolExecutor | None = None
+_RETRIEVAL_EXECUTOR_LOCK = threading.Lock()
+
+
+def _get_retrieval_executor() -> ThreadPoolExecutor:
+    """惰性创建并复用检索线程池（线程安全）"""
+    global _RETRIEVAL_EXECUTOR
+    if _RETRIEVAL_EXECUTOR is None:
+        with _RETRIEVAL_EXECUTOR_LOCK:
+            if _RETRIEVAL_EXECUTOR is None:
+                _RETRIEVAL_EXECUTOR = ThreadPoolExecutor(
+                    max_workers=4, thread_name_prefix="hybrid_retrieve"
+                )
+    return _RETRIEVAL_EXECUTOR
+
 
 logger = logging.getLogger(__name__)
 
@@ -87,21 +106,17 @@ class HybridRetriever:
         vec_topk = max(k * 3, 30)
 
         if use_bm25:
-            with ThreadPoolExecutor(max_workers=2) as ex:
-                vec_fut = ex.submit(
-                    self.store_manager.retrieve,
-                    query_embedding=query_embedding,
-                    top_k=vec_topk,
-                    filters=filters,
-                )
-                bm25_fut = ex.submit(
-                    self.bm25_index.retrieve, query_text, top_k=vec_topk
-                )
-                vector_results = vec_fut.result()
-                bm25_docs = bm25_fut.result() or []
-            logger.info(
-                f"并行检索完成: vector={len(vector_results)}, bm25={len(bm25_docs)}"
+            ex = _get_retrieval_executor()
+            vec_fut = ex.submit(
+                self.store_manager.retrieve,
+                query_embedding=query_embedding,
+                top_k=vec_topk,
+                filters=filters,
             )
+            bm25_fut = ex.submit(self.bm25_index.retrieve, query_text, top_k=vec_topk)
+            vector_results = vec_fut.result()
+            bm25_docs = bm25_fut.result() or []
+            logger.info(f"并行检索完成: vector={len(vector_results)}, bm25={len(bm25_docs)}")
         else:
             vector_results = self.store_manager.retrieve(
                 query_embedding=query_embedding,

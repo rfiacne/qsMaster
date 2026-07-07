@@ -184,7 +184,7 @@ class QueryPipeline:
         Returns:
             (early_result_dict, retrieval_data_dict)
             - early_result_dict: 若命中 Early Exit 或缓存，返回结果 dict，retrieval_data 为 None
-            - retrieval_data_dict: 包含 context_docs, sources, sources_dedup, effective_question, retrieval_time_ms
+            - retrieval_data_dict: 包含 context_docs, sources, sources_dedup, retrieval_time_ms
             - 若索引为空，返回 ({"error": "EMPTY_INDEX"}, None)
         """
         tracer = get_tracer()
@@ -429,7 +429,9 @@ class QueryPipeline:
                 span.set_status(f"error: {e}")
                 logger.error(f"LLM 生成失败: {e}")
 
-        # 6) Faithfulness 校验 — 异步执行，不阻塞响应返回
+        # 6) Faithfulness 校验 — 同步执行
+        #    必须在返回前完成，以保证 result.faithfulness / 审计日志 / 缓存数据完整，
+        #    且校验失败时可对答案降级（异步执行会导致答案已返回才出结果，防护失效）。
         _original_answer = result.answer
         _should_skip_faithfulness = (
             result.answer is None
@@ -437,23 +439,29 @@ class QueryPipeline:
             or result.from_standard_answer
             or self._is_low_risk_context(chunk_results, self.reranker is not None)
         )
-
-        def _run_faithfulness_async():
-            """后台执行 faithfulness 校验、审核入队、审计日志"""
-            try:
-                with tracer.start_span("faithfulness_check_async") as span:
+        if not _should_skip_faithfulness:
+            with tracer.start_span("faithfulness_check") as span:
+                try:
                     report = self.faithfulness_evaluator.evaluate(
                         question=question,
                         answer=_original_answer,
                         context_docs=context_docs,
                     )
                     result.faithfulness = report.to_dict()
+                    # 保存原始回答用于审核入队（避免降级提示文本替代原始回答）
                     result.faithfulness["original_answer"] = _original_answer
 
                     if report.degraded:
                         logger.warning(
-                            f"Faithfulness 校验不通过 (异步): 支撑比例 {report.score:.2f}"
-                            f" < 阈值 {self.faithfulness_evaluator.threshold}"
+                            "Faithfulness 校验不通过，回答降级: "
+                            f"支撑比例 {report.score:.2f} < 阈值 "
+                            f"{self.faithfulness_evaluator.threshold}"
+                        )
+                        # 降级：用警示包裹原始回答，提示用户注意甄别
+                        result.answer = (
+                            "根据当前知识库无法确认该问题的答案。\n\n"
+                            "以下为 LLM 原始生成内容（未经校验），请注意甄别：\n\n"
+                            f"{result.answer}"
                         )
                         metrics.record_faithfulness(passed=False)
                     else:
@@ -462,45 +470,37 @@ class QueryPipeline:
                     span.set_attribute("result", report.result.value if report else "unknown")
                     span.set_attribute("score", report.score if report else 0.0)
 
-                # 审核队列 — Faithfulness FAIL 自动入队
-                if (
-                    result.faithfulness
-                    and result.faithfulness.get("result") == "fail"
-                    and self.review_workflow is not None
-                ):
-                    try:
-                        self.review_workflow.add_item(
-                            question=question,
-                            answer=result.faithfulness.get(
-                                "original_answer", _original_answer or ""
-                            ),
-                            sources=[
-                                s.to_dict() if hasattr(s, "to_dict") else vars(s)
-                                for s in result.sources
-                            ],
-                            faithfulness_score=result.faithfulness.get("score", 0.0),
-                            faithfulness_result="fail",
-                            priority="high",
-                        )
-                        logger.info("问答已自动加入审核队列 (异步)")
-                    except Exception as e:
-                        logger.error(f"审核队列入队失败 (异步): {e}")
-
-            except Exception as e:
-                logger.error(f"Faithfulness 校验异常 (异步): {e}")
-
-        if not _should_skip_faithfulness:
-            # 启动后台线程执行 faithfulness
-            faithfulness_thread = threading.Thread(
-                target=_run_faithfulness_async,
-                name=f"faithfulness-{question[:20]}",
-                daemon=True,
-            )
-            faithfulness_thread.start()
+                    # 审核队列 — Faithfulness FAIL 自动入队
+                    if (
+                        result.faithfulness
+                        and result.faithfulness.get("result") == "fail"
+                        and self.review_workflow is not None
+                    ):
+                        try:
+                            self.review_workflow.add_item(
+                                question=question,
+                                answer=result.faithfulness.get(
+                                    "original_answer", _original_answer or ""
+                                ),
+                                sources=[
+                                    s.to_dict() if hasattr(s, "to_dict") else vars(s)
+                                    for s in result.sources
+                                ],
+                                faithfulness_score=result.faithfulness.get("score", 0.0),
+                                faithfulness_result="fail",
+                                priority="high",
+                            )
+                            logger.info("问答已自动加入审核队列")
+                        except Exception as e:
+                            logger.error(f"审核队列入队失败: {e}")
+                except Exception as e:
+                    span.set_status(f"error: {e}")
+                    logger.error(f"Faithfulness 校验异常（不影响回答输出）: {e}")
         else:
-            # 跳过 faithfulness，直接记录指标
+            # 跳过 faithfulness（低风险场景）：单独计数，不计入通过率，
+            # 避免把"假设安全"误记为"实测通过"，虚高 Faithfulness 指标
             if result.answer is not None:
-                metrics.record_faithfulness(passed=True)
+                metrics.record_faithfulness_skipped()
 
         # 8) 审计日志 — 每笔问答记录
         if self.audit_store is not None:
@@ -642,7 +642,6 @@ class QueryPipeline:
         # 从 retrieval_data 提取
         context_docs = retrieval_data["context_docs"]
         sources_dedup = retrieval_data["sources_dedup"]
-        effective_question = retrieval_data["effective_question"]
         retrieval_time = retrieval_data["retrieval_time_ms"]
 
         yield {"type": "meta", "from_standard_answer": False}

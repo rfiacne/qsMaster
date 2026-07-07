@@ -39,6 +39,7 @@ class MetricsSnapshot:
     early_exit_hits: int = 0
     faithfulness_passes: int = 0
     faithfulness_fails: int = 0
+    faithfulness_skipped: int = 0
     latency_p50: float = 0.0
     latency_p95: float = 0.0
     latency_p99: float = 0.0
@@ -58,6 +59,7 @@ class MetricsSnapshot:
                 / max(self.faithfulness_passes + self.faithfulness_fails, 1),
                 4,
             ),
+            "faithfulness_skipped": self.faithfulness_skipped,
             "latency_ms": {
                 "p50": round(self.latency_p50, 1),
                 "p95": round(self.latency_p95, 1),
@@ -87,6 +89,7 @@ class InMemoryMetrics:
         self._early_exit_hits = 0
         self._faithfulness_passes = 0
         self._faithfulness_fails = 0
+        self._faithfulness_skipped = 0
         self._lock = Lock()
         self._window_start = time.time()
         # 成本追踪
@@ -111,6 +114,11 @@ class InMemoryMetrics:
             else:
                 self._faithfulness_fails += 1
 
+    def record_faithfulness_skipped(self) -> None:
+        """记录 Faithfulness 因低风险场景被跳过（不计入通过/失败率）"""
+        with self._lock:
+            self._faithfulness_skipped += 1
+
     def record_llm_cost(self, cost: float) -> None:
         """记录 LLM 调用成本（美元）"""
         with self._lock:
@@ -128,6 +136,7 @@ class InMemoryMetrics:
             ee_hits = self._early_exit_hits
             fp = self._faithfulness_passes
             ff = self._faithfulness_fails
+            fs = self._faithfulness_skipped
             latencies = sorted(self._latencies) if self._latencies else [0.0]
             total_cost = self._total_cost
             llm_calls = self._llm_calls
@@ -139,6 +148,7 @@ class InMemoryMetrics:
             early_exit_hits=ee_hits,
             faithfulness_passes=fp,
             faithfulness_fails=ff,
+            faithfulness_skipped=fs,
             latency_p50=latencies[min(n - 1, int(n * 0.5))],
             latency_p95=latencies[min(n - 1, int(n * 0.95))],
             latency_p99=latencies[min(n - 1, int(n * 0.99))],

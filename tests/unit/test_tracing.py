@@ -108,6 +108,16 @@ class TestInMemoryMetrics:
         assert s.faithfulness_passes == 2
         assert s.faithfulness_fails == 1
 
+    def test_faithfulness_skipped_not_counted_as_pass(self):
+        """跳过的 Faithfulness 不应计入通过/失败，避免虚高通过率"""
+        self.m.record_faithfulness(passed=True)
+        self.m.record_faithfulness_skipped()
+        self.m.record_faithfulness_skipped()
+        s = self.m.snapshot()
+        assert s.faithfulness_passes == 1
+        assert s.faithfulness_fails == 0
+        assert s.faithfulness_skipped == 2
+
     def test_latency_percentiles(self):
         for i in range(100):
             self.m.record_request(float(i))  # 0..99 ms

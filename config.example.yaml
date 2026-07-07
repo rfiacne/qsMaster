@@ -72,10 +72,10 @@ early_exit:
   fuzzy_threshold: 0.82       # 语义模糊匹配相似度阈值 (0~1)
   store_path: "./data/standard_answers"  # 标准答案库存储路径
 
-# ── M2: Faithfulness 防幻觉校验 ────────────────────────
+# ── M2/M7: Faithfulness 防幻觉校验 ───────────────────────
 faithfulness:
   enabled: true               # 启用 LLM 生成后自动校验
-  mode: "llm"                 # 校验模式: llm | disabled
+  mode: "graded"              # M7: 校验模式: graded(加权评分) | strict(二值) | disabled
   threshold: 0.7              # M6: 通过阈值（从 0.5 提升至 0.7）
   max_claims: 10              # 每次最多校验的声明数
   judge_model: ""             # M6: 校验用独立模型名（空则复用 LLM 主模型）
@@ -98,12 +98,13 @@ otel:
   endpoint: ""                # OTLP HTTP 端点（如 http://otel-collector:4318）
   service_name: "securities-qa-agent"
 
-# ── M6: 查询改写 ────────────────────────────────────────
+# ── M6/M7: 查询改写 ───────────────────────────────────────
 query_rewrite:
-  enabled: true               # 启用查询改写（术语归一化 + 多意图分解）
+  enabled: true               # 启用查询改写（术语归一化 + 概念消歧 + 多意图分解）
   model: ""                   # 改写用模型（空则复用 LLM 主模型）
   timeout_seconds: 3.0        # LLM 改写调用超时（秒）
-  term_map_path: "./data/term_map.json"  # 术语映射表路径（证券简称→全称）
+  term_map_path: "./data/term_map.json"  # 术语映射表路径
+  concept_disambig_enabled: true  # M7: 启用概念消歧（处理清算/结算等近义不同术语）
 
 # ── M6: 查询缓存 ────────────────────────────────────────
 query_cache:

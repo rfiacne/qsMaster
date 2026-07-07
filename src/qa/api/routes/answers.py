@@ -6,6 +6,7 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from qa.api.dependencies import reset_runtime_singletons
 from qa.api.middleware import check_rate_limit
 from qa.config.settings import get_settings
 
@@ -63,6 +64,9 @@ async def add_answer(req: dict, _auth=Depends(check_rate_limit)):
     a = req.get("answer", "").strip()
     if not q or not a:
         raise HTTPException(status_code=400, detail="question 和 answer 为必填字段")
+    # 拒绝前端占位符文本（流式回答未完成时用户误点）
+    if a in ("<em>正在生成回答...</em>", "正在生成回答...", "<em>正在生成回答...</em>"):
+        raise HTTPException(status_code=400, detail="回答内容为占位符，请等待回答生成完成后再添加")
     answer = std_answer_cls(
         question=q,
         answer=a,
@@ -71,6 +75,7 @@ async def add_answer(req: dict, _auth=Depends(check_rate_limit)):
         match_strategy=req.get("match_strategy", "both"),
     )
     is_new = store.add(answer)
+    reset_runtime_singletons()
     return {"id": answer.id, "created": is_new, "question": q}
 
 
@@ -79,6 +84,7 @@ async def delete_answer(answer_id: str, _auth=Depends(check_rate_limit)):
     """删除标准答案"""
     store, _ = _get_answer_store()
     if store.remove(answer_id):
+        reset_runtime_singletons()
         return {"deleted": True, "id": answer_id}
     raise HTTPException(status_code=404, detail="未找到该标准答案")
 
@@ -91,6 +97,7 @@ async def set_answer_status(answer_id: str, req: dict, _auth=Depends(check_rate_
     if new_status not in ("enabled", "disabled"):
         raise HTTPException(status_code=400, detail="status 必须为 enabled 或 disabled")
     if store.set_status(answer_id, new_status):
+        reset_runtime_singletons()
         return {"id": answer_id, "status": new_status}
     raise HTTPException(status_code=404, detail="未找到该标准答案")
 

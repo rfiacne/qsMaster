@@ -108,9 +108,7 @@ class QueryRewriter:
             self._term_patterns = [
                 (re.compile(re.escape(term)), self._term_map[term]) for term in sorted_terms
             ]
-            logger.info(
-                f"术语映射表加载完成: {len(self._term_patterns)} 条映射"
-            )
+            logger.info(f"术语映射表加载完成: {len(self._term_patterns)} 条映射")
 
             # ── 加载概念消歧规则（concepts 区块，可选） ──
             concepts = raw.get("concepts", {})
@@ -130,9 +128,7 @@ class QueryRewriter:
                     (re.compile(re.escape(pt)), repl) for pt, repl in raw_patterns
                 ]
                 if self._concept_patterns:
-                    logger.info(
-                        f"概念消歧规则加载完成: {len(self._concept_patterns)} 条"
-                    )
+                    logger.info(f"概念消歧规则加载完成: {len(self._concept_patterns)} 条")
         except (json.JSONDecodeError, OSError) as e:
             logger.warning(f"术语映射表加载失败: {e}")
 
@@ -181,16 +177,22 @@ class QueryRewriter:
                     result.rewritten = sub_questions[0]
                     result.was_rewritten = True
                     result.rewrite_method = (
-                        "concept_disambig" if was_disambiguated else
-                        "term_normalize" if was_normalized else "passthrough"
+                        "concept_disambig"
+                        if was_disambiguated
+                        else "term_normalize"
+                        if was_normalized
+                        else "passthrough"
                     )
                 else:
                     # 分解失败，回退到消歧文本
                     result.rewritten = disambiguated
                     result.was_rewritten = was_normalized or was_disambiguated
                     result.rewrite_method = (
-                        "concept_disambig" if was_disambiguated else
-                        "term_normalize" if was_normalized else "passthrough"
+                        "concept_disambig"
+                        if was_disambiguated
+                        else "term_normalize"
+                        if was_normalized
+                        else "passthrough"
                     )
             except Exception as e:
                 logger.warning(f"LLM 分解失败，回退消歧文本: {e}")
@@ -198,16 +200,22 @@ class QueryRewriter:
                 result.rewritten = disambiguated
                 result.was_rewritten = was_normalized or was_disambiguated
                 result.rewrite_method = (
-                    "concept_disambig" if was_disambiguated else
-                    "term_normalize" if was_normalized else "passthrough"
+                    "concept_disambig"
+                    if was_disambiguated
+                    else "term_normalize"
+                    if was_normalized
+                    else "passthrough"
                 )
         else:
             # 单一意图透传（消歧后）
             result.rewritten = disambiguated
             result.was_rewritten = was_normalized or was_disambiguated
             result.rewrite_method = (
-                "concept_disambig" if was_disambiguated else
-                "term_normalize" if was_normalized else "passthrough"
+                "concept_disambig"
+                if was_disambiguated
+                else "term_normalize"
+                if was_normalized
+                else "passthrough"
             )
 
         result.rewrite_time_ms = (time.time() - t0) * 1000

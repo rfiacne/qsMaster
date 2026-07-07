@@ -44,7 +44,13 @@ echo  Press Ctrl+C to stop the server.
 echo.
 .venv\Scripts\python -m qa.api.server
 if errorlevel 1 (
-    echo Failed to start server. Run setup.bat first.
+    echo.
+    echo [ERROR] Server failed to start.
+    echo Common causes:
+    echo   - Missing dependencies: run setup.bat
+    echo   - Port 8001 already in use: close other servers or change config
+    echo   - Config error: check ~/.qa/config.yaml
+    echo.
     pause
 )
 goto menu
@@ -75,13 +81,23 @@ echo.
 
 :: Check if backend is already running
 curl -s http://127.0.0.1:8001/api/v1/qa/health >nul 2>&1
-if %errorlevel% neq 0 (
-    echo Backend not running. Starting API server automatically...
-    echo Log: server.log  (check this if the server doesn't start)
-    start "QA Server" cmd /c "set PYTHONIOENCODING=utf-8 && %~dp0.venv\Scripts\python.exe -m qa.api.server >> %~dp0server.log 2>&1"
-    echo Waiting for server to start...
-    timeout /t 5 /nobreak >nul
-)
+if %errorlevel% equ 0 goto backend_ready
+
+echo Backend not running. Starting API server automatically...
+echo Log: server.log  (check this if the server doesn't start)
+type nul > "%~dp0server.log"
+start "QA Server" cmd /c "set PYTHONIOENCODING=utf-8 && .venv\Scripts\python.exe -m qa.api.server >> server.log 2>&1 || pause"
+echo Waiting for server to start (up to 16s)...
+set /a _tries=0
+:wait_loop
+if %_tries% geq 8 goto wait_done
+timeout /t 2 /nobreak >nul
+curl -s http://127.0.0.1:8001/api/v1/qa/health >nul 2>&1 && goto wait_done
+set /a _tries+=1
+goto wait_loop
+:wait_done
+
+:backend_ready
 
 echo Opening http://127.0.0.1:8001 ...
 start "" "http://127.0.0.1:8001"

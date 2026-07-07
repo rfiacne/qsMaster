@@ -360,6 +360,12 @@ class QueryRewriteConfig(BaseSettings):
         default="./data/term_map.json",
         description="术语映射表路径（证券简称→全称）",
     )
+    concept_disambig_enabled: bool = Field(
+        default=True,
+        description=(
+            "启用概念消歧（处理清算/结算等近义但不同的术语，依赖 term_map 中的 concepts 区块）"
+        ),
+    )
 
 
 class QueryCacheConfig(BaseSettings):

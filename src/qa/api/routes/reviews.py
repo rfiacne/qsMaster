@@ -6,6 +6,7 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from qa.api.dependencies import reset_runtime_singletons
 from qa.api.middleware import check_rate_limit
 from qa.config.settings import get_settings
 from qa.pipelines.components.review_queue import ReviewWorkflow
@@ -53,6 +54,7 @@ async def label_review(item_id: str, req: dict, _auth=Depends(check_rate_limit))
         comment=req.get("comment", ""),
         standard_answer_store=std_store,
     ):
+        reset_runtime_singletons()
         return {"id": item_id, "label": label}
     raise HTTPException(status_code=400, detail="标注失败（可能已审核或不存在）")
 
