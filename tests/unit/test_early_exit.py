@@ -106,9 +106,9 @@ class TestStandardAnswerStore:
 
     @pytest.fixture(autouse=True)
     def setup(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            self.store = StandardAnswerStore(store_path=tmpdir)
-            self.store.load()
+        with tempfile.TemporaryDirectory() as tmpdir, StandardAnswerStore(store_path=tmpdir) as store:
+            store.load()
+            self.store = store
             yield
 
     def test_empty_store(self):
@@ -211,7 +211,7 @@ class TestStandardAnswerStore:
         finally:
             import shutil
 
-            shutil.rmtree(tmpdir)
+            shutil.rmtree(tmpdir, ignore_errors=True)
 
 
 class TestNormalization:
@@ -252,9 +252,9 @@ class TestImportBatch:
 
     @pytest.fixture(autouse=True)
     def setup(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            self.store = StandardAnswerStore(store_path=tmpdir)
-            self.store.load()
+        with tempfile.TemporaryDirectory() as tmpdir, StandardAnswerStore(store_path=tmpdir) as store:
+            store.load()
+            self.store = store
             yield
 
     def test_import_valid_items(self):
@@ -301,9 +301,8 @@ class TestEarlyExitMatcher:
 
     @pytest.fixture(autouse=True)
     def setup(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory() as tmpdir, StandardAnswerStore(store_path=tmpdir) as store:
             self.store_path = tmpdir
-            store = StandardAnswerStore(store_path=tmpdir)
             store.load()
             store.add(
                 StandardAnswer(

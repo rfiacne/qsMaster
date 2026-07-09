@@ -41,6 +41,7 @@ class AuditRecord:
     total_time_ms: float = 0.0
     from_standard_answer: bool = False
     match_type: str = ""
+    cached: bool = False
     faithfulness_result: str = ""
     faithfulness_score: float = 0.0
     sources: list[dict[str, Any]] = field(default_factory=list)
@@ -61,6 +62,7 @@ class AuditRecord:
             total_time_ms=data.get("total_time_ms", 0.0),
             from_standard_answer=data.get("from_standard_answer", False),
             match_type=data.get("match_type", ""),
+            cached=data.get("cached", False),
             faithfulness_result=data.get("faithfulness_result", ""),
             faithfulness_score=data.get("faithfulness_score", 0.0),
             sources=data.get("sources", []),
@@ -144,6 +146,16 @@ class AuditStore:
             self._rotate_if_needed()
             with open(self.log_file, "a", encoding="utf-8") as f:
                 f.write(line + "\n")
+
+    def close(self) -> None:
+        """关闭存储（空操作，JSONL 不需要显式关闭）"""
+        pass
+
+    def __enter__(self) -> AuditStore:
+        return self
+
+    def __exit__(self, *args: Any) -> None:
+        self.close()
 
     def query(
         self,

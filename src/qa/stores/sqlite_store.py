@@ -20,7 +20,7 @@ import sqlite3
 import threading
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +39,7 @@ class BaseSQLiteStore:
         self,
         db_path: str | Path,
         auto_migrate_json: str | None = None,
-        json_loader: callable | None = None,
+        json_loader: Callable | None = None,
     ):
         """
         Args:
@@ -92,13 +92,20 @@ class BaseSQLiteStore:
                 self._conn.close()
                 self._conn = None
 
+    def __enter__(self) -> BaseSQLiteStore:
+        return self
+
+    def __exit__(self, *args: Any) -> None:
+        self.close()
+
     def _execute(self, sql: str, params: tuple = ()) -> sqlite3.Cursor:
         """执行 SQL（自动重连保护）"""
         try:
             return self._get_conn().execute(sql, params)
         except sqlite3.ProgrammingError as e:
             if "closed" in str(e):
-                self._conn = None
+                with self._lock:
+                    self._conn = None
                 return self._get_conn().execute(sql, params)
             raise
 

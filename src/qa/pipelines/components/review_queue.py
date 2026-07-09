@@ -204,6 +204,12 @@ class ReviewStore:
                 self._conn.close()
                 self._conn = None
 
+    def __enter__(self) -> ReviewStore:
+        return self
+
+    def __exit__(self, *args: Any) -> None:
+        self.close()
+
     def _migrate_from_json(self, raw: list[dict]) -> None:
         """从 JSON 列表批量导入到 SQLite"""
         conn = self._get_conn()
@@ -449,6 +455,16 @@ class ReviewWorkflow:
     def ensure_loaded(self) -> None:
         if not self.store.is_loaded:
             self.store.load()
+
+    def close(self) -> None:
+        """关闭内部 ReviewStore 的 SQLite 连接"""
+        self.store.close()
+
+    def __enter__(self) -> ReviewWorkflow:
+        return self
+
+    def __exit__(self, *args: Any) -> None:
+        self.close()
 
     def add_item(
         self,

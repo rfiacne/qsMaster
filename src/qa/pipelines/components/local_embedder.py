@@ -61,13 +61,15 @@ class LocalEmbedder:
 
         线程安全：SentenceTransformer 的 encode() 方法对同一模型的并发调用
         可能导致崩溃或静默错误结果，故用 threading.Lock 保护。
+        使用双重检查锁定模式，避免每次调用都获取写锁。
 
         Args:
             texts: 文本列表
             task: jina v5 任务类型 (retrieval, text-matching, clustering, classification)
         """
-        self._lazy_load()
         with self._encode_lock:
+            if self._model is None:
+                self._lazy_load()
             embeddings = self._model.encode(texts, task=task, show_progress_bar=False)
         return [emb.tolist() for emb in embeddings]
 

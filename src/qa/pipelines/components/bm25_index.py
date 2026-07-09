@@ -290,8 +290,8 @@ def load_or_build(
                         f"{index.total_docs} 文档, 耗时={elapsed:.0f}ms"
                     )
                     return index
-            except Exception:
-                pass  # 损坏或版本不匹配，继续重建
+            except Exception as e:
+                logger.warning(f"BM25 索引锁后加载异常，将重建: {e}")
 
         if _building:
             logger.warning(

@@ -332,6 +332,8 @@ class TestEarlyExitIntegration:
 
     @pytest.fixture
     def std_store(self):
+        import shutil as _shutil
+
         from qa.pipelines.components.early_exit import StandardAnswer, StandardAnswerStore
 
         tmpdir = tempfile.mkdtemp()
@@ -345,7 +347,8 @@ class TestEarlyExitIntegration:
                 source="seed",
             )
         )
-        return store
+        yield store
+        _shutil.rmtree(tmpdir, ignore_errors=True)
 
     def test_exact_match(self, std_store):
         """精确匹配应返回标准答案"""

@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -85,6 +86,8 @@ class QueryRewriter:
         # 概念消歧：pattern → replacement（长 pattern 优先匹配）
         self._concept_patterns: list[tuple[re.Pattern[str], str]] = []
         self._load_term_map()
+        self._llm_client = None
+        self._llm_client_lock = threading.Lock()
 
     def _load_term_map(self) -> None:
         """加载术语映射表和概念消歧规则"""
@@ -175,7 +178,7 @@ class QueryRewriter:
                 elif sub_questions and len(sub_questions) == 1:
                     # LLM 判定为单一意图，用消歧后的文本
                     result.rewritten = sub_questions[0]
-                    result.was_rewritten = True
+                    result.was_rewritten = was_normalized or was_disambiguated
                     result.rewrite_method = (
                         "concept_disambig"
                         if was_disambiguated
@@ -318,14 +321,17 @@ class QueryRewriter:
             logger.debug("查询改写: 未配置 LLM API 密钥，跳过多意图分解")
             return []
 
-        # 复用 OpenAI 客户端，避免每次请求重建连接池
-        if not hasattr(self, "_llm_client") or self._llm_client is None:
-            self._llm_client = OpenAI(
-                api_key=api_key,
-                base_url=settings.llm.api_base_url,
-                timeout=self.timeout_seconds,
-            )
+        # 复用 OpenAI 客户端，避免每次请求重建连接池（线程安全，双重检查锁定）
         client = self._llm_client
+        if client is None:
+            with self._llm_client_lock:
+                if self._llm_client is None:
+                    self._llm_client = OpenAI(
+                        api_key=api_key,
+                        base_url=settings.llm.api_base_url,
+                        timeout=self.timeout_seconds,
+                    )
+                client = self._llm_client
 
         system_prompt = (
             "你是一个证券清算领域的查询分析助手。你的任务是判断用户问题是否包含"

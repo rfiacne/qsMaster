@@ -91,8 +91,10 @@ for _mod in _modules_to_patch:
 
 @pytest.fixture
 def settings_mock():
-    """返回当前共享的 mock settings，测试可局部 override"""
-    return _mock_settings
+    """返回当前共享的 mock settings 的副本，测试可局部 override 而不会污染其他测试"""
+    import copy
+
+    return copy.deepcopy(_mock_settings)
 
 
 @pytest.fixture
@@ -126,16 +128,21 @@ def client(review_tmpdir, answer_tmpdir, session_tmpdir):
     from qa.pipelines.components.review_queue import ReviewWorkflow
     from qa.pipelines.components.session_store import SessionStore
 
-    # Patch store paths to temp dirs
+    # Track created instances to close them before tmpdir cleanup
+    created_workflows: list[ReviewWorkflow] = []
+    created_sessions: list[SessionStore] = []
+
     original_review_init = ReviewWorkflow.__init__
     original_session_init = SessionStore.__init__
     original_answer_init = StandardAnswerStore.__init__
 
     def patched_review_init(self, store_path=review_tmpdir, **kwargs):
         original_review_init(self, store_path=review_tmpdir, **kwargs)
+        created_workflows.append(self)
 
     def patched_session_init(self, store_path=session_tmpdir, **kwargs):
         original_session_init(self, store_path=session_tmpdir, **kwargs)
+        created_sessions.append(self)
 
     def patched_answer_init(self, store_path=answer_tmpdir, **kwargs):
         original_answer_init(self, store_path=answer_tmpdir, **kwargs)
@@ -146,3 +153,9 @@ def client(review_tmpdir, answer_tmpdir, session_tmpdir):
         mock.patch.object(StandardAnswerStore, "__init__", patched_answer_init),
     ):
         yield TestClient(app)
+
+    # Close all created stores to release SQLite WAL locks before tmpdir cleanup
+    for wf in created_workflows:
+        wf.store.close()
+    for ss in created_sessions:
+        ss.close()

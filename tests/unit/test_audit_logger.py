@@ -71,8 +71,8 @@ class TestAuditRecord:
 class TestAuditStore:
     @pytest.fixture(autouse=True)
     def setup(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            self.store = AuditStore(store_path=tmpdir)
+        with tempfile.TemporaryDirectory() as tmpdir, AuditStore(store_path=tmpdir) as store:
+            self.store = store
             yield
 
     def test_empty(self):
@@ -227,20 +227,25 @@ class TestAuditStore:
 
     def test_log_rotation(self):
         """超限触发日志轮转"""
+        import shutil
         import tempfile
 
-        small_store = AuditStore(
-            store_path=tempfile.mkdtemp(),
-            max_bytes=200,  # 极小阈值触发轮转
-            backup_count=3,
-        )
-        for i in range(20):
-            small_store.append(AuditRecord(question=f"问题{i}", answer=f"回答{i}" * 5))
-        # 主文件应存在
-        assert small_store.log_file.exists()
-        # 应有轮转备份
-        backups = list(small_store.store_path.glob("audit.*.log"))
-        assert len(backups) > 0
+        _tmpdir = tempfile.mkdtemp()
+        try:
+            small_store = AuditStore(
+                store_path=_tmpdir,
+                max_bytes=200,  # 极小阈值触发轮转
+                backup_count=3,
+            )
+            for i in range(20):
+                small_store.append(AuditRecord(question=f"问题{i}", answer=f"回答{i}" * 5))
+            # 主文件应存在
+            assert small_store.log_file.exists()
+            # 应有轮转备份
+            backups = list(small_store.store_path.glob("audit.*.log"))
+            assert len(backups) > 0
+        finally:
+            shutil.rmtree(_tmpdir, ignore_errors=True)
 
     def test_malformed_line_skipped(self):
         """损坏的 JSONL 行被跳过而非崩溃"""

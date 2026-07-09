@@ -194,22 +194,9 @@ class QueryPipeline:
         if self.store_manager.count_chunks() == 0:
             return {"error": "EMPTY_INDEX"}, None
 
-        # 0.5) 查询缓存 — 最先检查，命中则跳过 embedding 等所有后续开销
-        if enable_cache and self.query_cache is not None:
-            with tracer.start_span("query_cache_check") as span:
-                try:
-                    cached_result = self.query_cache.get(
-                        question=question, top_k=k, filters=filters
-                    )
-                    if cached_result is not None:
-                        logger.info(f"查询缓存命中: {question[:60]}")
-                        span.set_attribute("hit", "true")
-                        return {"cached": cached_result}, None
-                    span.set_attribute("hit", "false")
-                except Exception as e:
-                    logger.warning(f"查询缓存检查异常（不影响主流程）: {e}")
 
-        # 0.6) Early Exit — 标准答案库匹配（缓存未命中才走，需 embedding）
+                # 0.5) Early Exit — 标准答案库匹配（优先于缓存，确保标准答案更新后
+        #       不会因为旧缓存遮蔽新标准答案）
         if self.early_exit_matcher is not None and self.early_exit_matcher.is_enabled:
             with tracer.start_span("early_exit", {"question": question[:100]}) as span:
                 ee_result = self.early_exit_matcher.match(question)
@@ -237,6 +224,21 @@ class QueryPipeline:
                         )
                     ],
                 }, None
+
+        # 0.6) 查询缓存 — Early Exit 未命中才检查缓存
+        if enable_cache and self.query_cache is not None:
+            with tracer.start_span("query_cache_check") as span:
+                try:
+                    cached_result = self.query_cache.get(
+                        question=question, top_k=k, filters=filters
+                    )
+                    if cached_result is not None:
+                        logger.info(f"查询缓存命中: {question[:60]}")
+                        span.set_attribute("hit", "true")
+                        return {"cached": cached_result}, None
+                    span.set_attribute("hit", "false")
+                except Exception as e:
+                    logger.warning(f"查询缓存检查异常（不影响主流程）: {e}")
 
         # 0.75) 查询改写（术语归一化 + 多意图分解）
         effective_question = question
@@ -352,6 +354,42 @@ class QueryPipeline:
             "retrieval_time_ms": retrieval_time_ms,
         }
 
+    def _log_cached_audit(self, cached: QueryResult, t0: float) -> None:
+        """缓存命中的审计日志记录（证券合规要求每笔问答留痕）"""
+        if self.audit_store is None:
+            return
+        try:
+            record = AuditRecord(
+                question=cached.question,
+                answer=cached.answer or "",
+                retrieval_time_ms=cached.retrieval_time_ms,
+                generation_time_ms=cached.generation_time_ms,
+                total_time_ms=(time.time() - t0) * 1000,
+                from_standard_answer=False,
+                cached=True,
+                faithfulness_result=(
+                    cached.faithfulness.get("result", "")
+                    if cached.faithfulness
+                    else ""
+                ),
+                faithfulness_score=(
+                    cached.faithfulness.get("score", 0.0)
+                    if cached.faithfulness
+                    else 0.0
+                ),
+                sources=[
+                    {
+                        "file_name": s.file_name,
+                        "score": s.score,
+                        "source_type": getattr(s, "source_type", ""),
+                    }
+                    for s in (cached.sources or [])
+                ],
+            )
+            self.audit_store.append(record)
+        except Exception as e:
+            logger.error(f"审计日志（缓存命中）记录失败: {e}")
+
     def run(
         self,
         question: str,
@@ -386,7 +424,9 @@ class QueryPipeline:
             if "error" in early_result:
                 result.api_error = early_result["error"]
             elif "cached" in early_result:
-                return early_result["cached"]
+                cached = early_result["cached"]
+                self._log_cached_audit(cached, t0)
+                return cached
             elif early_result.get("early_exit"):
                 result.answer = early_result["answer"]
                 result.from_standard_answer = True
@@ -618,6 +658,7 @@ class QueryPipeline:
                         "score": cached.faithfulness.get("score", 0.0),
                         "summary": cached.faithfulness.get("summary", ""),
                     }
+                self._log_cached_audit(cached, t0)
                 yield {"type": "done", "total_time_ms": (time.time() - t0) * 1000}
             elif early_result.get("early_exit"):
                 sources = [

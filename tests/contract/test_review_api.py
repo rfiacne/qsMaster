@@ -44,14 +44,21 @@ def client(review_tmpdir):
     from qa.api.server import app
     from qa.pipelines.components.review_queue import ReviewWorkflow
 
-    # Patch ReviewWorkflow 使用临时目录
+    # Track created instances to close them before tmpdir cleanup
+    created_workflows: list[ReviewWorkflow] = []
+
     original_init = ReviewWorkflow.__init__
 
     def patched_init(self, store_path=review_tmpdir, **kwargs):
         original_init(self, store_path=review_tmpdir, **kwargs)
+        created_workflows.append(self)
 
     with mock.patch.object(ReviewWorkflow, "__init__", patched_init):
         yield TestClient(app)
+
+    # Close all created stores to release SQLite WAL locks before tmpdir cleanup
+    for wf in created_workflows:
+        wf.store.close()
 
 
 @pytest.fixture
@@ -59,16 +66,16 @@ def seeded_review(client, review_tmpdir):
     """预置一条待审核项，返回 item_id"""
     from qa.pipelines.components.review_queue import ReviewWorkflow
 
-    workflow = ReviewWorkflow(store_path=review_tmpdir)
-    workflow.ensure_loaded()
-    item_id = workflow.add_item(
-        question="测试问题",
-        answer="测试回答",
-        faithfulness_score=0.3,
-        faithfulness_result="fail",
-        priority="high",
-    )
-    return item_id
+    with ReviewWorkflow(store_path=review_tmpdir) as workflow:
+        workflow.ensure_loaded()
+        item_id = workflow.add_item(
+            question="测试问题",
+            answer="测试回答",
+            faithfulness_score=0.3,
+            faithfulness_result="fail",
+            priority="high",
+        )
+        yield item_id
 
 
 class TestListReviews:

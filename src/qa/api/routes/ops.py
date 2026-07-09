@@ -46,6 +46,7 @@ async def readiness():
         "checks": {},
     }
     all_healthy = True
+    chunk_count = 0  # 初始化默认值，防止 store 检查失败导致 UnboundLocalError
 
     # 1) 检查向量存储
     try:

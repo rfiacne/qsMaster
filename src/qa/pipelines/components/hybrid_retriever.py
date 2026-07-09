@@ -114,8 +114,16 @@ class HybridRetriever:
                 filters=filters,
             )
             bm25_fut = ex.submit(self.bm25_index.retrieve, query_text, top_k=vec_topk)
-            vector_results = vec_fut.result()
-            bm25_docs = bm25_fut.result() or []
+            try:
+                vector_results = vec_fut.result(timeout=30)
+            except TimeoutError:
+                vector_results = []
+                logger.warning("向量检索超时，降级为空结果")
+            try:
+                bm25_docs = bm25_fut.result(timeout=30) or []
+            except TimeoutError:
+                bm25_docs = []
+                logger.warning("BM25 检索超时，降级为空结果")
             logger.info(f"并行检索完成: vector={len(vector_results)}, bm25={len(bm25_docs)}")
         else:
             vector_results = self.store_manager.retrieve(

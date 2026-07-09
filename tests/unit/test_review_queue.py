@@ -122,11 +122,11 @@ class TestStandardAnswerStoreAliasStatus:
 
     @pytest.fixture(autouse=True)
     def setup(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            self.store = StandardAnswerStore(store_path=tmpdir)
-            self.store.load()
-            self.store.add(StandardAnswer(question="Q1", answer="A1", source="test"))
-            self.store.add(StandardAnswer(question="Q2", answer="A2", source="test"))
+        with tempfile.TemporaryDirectory() as tmpdir, StandardAnswerStore(store_path=tmpdir) as store:
+            store.load()
+            store.add(StandardAnswer(question="Q1", answer="A1", source="test"))
+            store.add(StandardAnswer(question="Q2", answer="A2", source="test"))
+            self.store = store
             self.answer_id = list(self.store._answers.keys())[0]
             yield
 
@@ -282,9 +282,9 @@ class TestReviewStats:
 class TestReviewStore:
     @pytest.fixture(autouse=True)
     def setup(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            self.store = ReviewStore(store_path=tmpdir)
-            self.store.load()
+        with tempfile.TemporaryDirectory() as tmpdir, ReviewStore(store_path=tmpdir) as store:
+            store.load()
+            self.store = store
             yield
 
     def test_empty(self):
@@ -369,7 +369,7 @@ class TestReviewStore:
             assert store2.count() == 1
             store2.close()
         finally:
-            shutil.rmtree(tmpdir)
+            shutil.rmtree(tmpdir, ignore_errors=True)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -380,9 +380,9 @@ class TestReviewStore:
 class TestReviewWorkflow:
     @pytest.fixture(autouse=True)
     def setup(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            self.workflow = ReviewWorkflow(store_path=tmpdir)
-            self.workflow.ensure_loaded()
+        with tempfile.TemporaryDirectory() as tmpdir, ReviewWorkflow(store_path=tmpdir) as wf:
+            wf.ensure_loaded()
+            self.workflow = wf
             yield
 
     def test_add_item_default_priority(self):
@@ -468,19 +468,21 @@ class TestAutoConvert:
     def setup(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             self.store_path = tmpdir
-            # StandardAnswerStore
             from qa.pipelines.components.early_exit import StandardAnswerStore
 
-            self.std_store = StandardAnswerStore(store_path=tmpdir)
-            self.std_store.load()
-            # ReviewWorkflow
-            self.workflow = ReviewWorkflow(
-                store_path=tmpdir,
-                semantic_threshold=0.8,
-                candidate_confirm_count=1,
-            )
-            self.workflow.ensure_loaded()
-            yield
+            with (
+                StandardAnswerStore(store_path=tmpdir) as std_store,
+                ReviewWorkflow(
+                    store_path=tmpdir,
+                    semantic_threshold=0.8,
+                    candidate_confirm_count=1,
+                ) as wf,
+            ):
+                std_store.load()
+                self.std_store = std_store
+                wf.ensure_loaded()
+                self.workflow = wf
+                yield
 
     def test_no_existing_answers_creates_candidate(self):
         """无现有标准答案时创建 candidate"""

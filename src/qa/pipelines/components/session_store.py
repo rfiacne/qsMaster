@@ -147,15 +147,12 @@ class SessionStore:
     旧 JSON 文件 data/sessions/sessions.json 自动迁移到 db_path。
     """
 
-    def __init__(self, store_path: str = "./data/sessions", debounce_seconds: float = 5.0):
+    def __init__(self, store_path: str = "./data/sessions"):
         self._db_path = Path(store_path) / "sessions.db"
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
         self._conn: sqlite3.Connection | None = None
         self._loaded = True  # SQLite always loaded
-        self._dirty = False
-        self._last_write = 0.0
-        self._debounce_seconds = debounce_seconds
 
         # 自动迁移旧 JSON 数据
         json_path = Path(store_path) / "sessions.json"
@@ -205,6 +202,12 @@ class SessionStore:
             if self._conn is not None:
                 self._conn.close()
                 self._conn = None
+
+    def __enter__(self) -> SessionStore:
+        return self
+
+    def __exit__(self, *args: Any) -> None:
+        self.close()
 
     def _migrate_from_json(self, raw: list[dict]) -> None:
         conn = self._get_conn()
@@ -257,18 +260,14 @@ class SessionStore:
                 ),
             )
             conn.commit()
-            self._dirty = True
-            now = time.time()
-            if now - self._last_write >= self._debounce_seconds:
-                self._last_write = now
 
     def flush(self) -> None:
         """兼容原接口 — SQLite 行级写入即时持久化"""
-        pass
+        logger.debug("SQLite 已即时持久化，无需 flush")
 
     def save_all(self) -> None:
         """兼容原接口 — SQLite 单个保存即时落盘"""
-        pass
+        logger.debug("SQLite 已即时持久化，无需 save_all")
 
     def create(self, max_turns: int = 10, max_tokens: int = 4000, title: str = "") -> Session:
         """创建新会话"""
@@ -315,7 +314,7 @@ class SessionStore:
         now = time_mod.time()
         cutoff = time_mod.strftime(
             "%Y-%m-%dT%H:%M:%S",
-            time_mod.gmtime(now - max_days * 86400),
+            time_mod.localtime(now - max_days * 86400),
         )
         with self._lock:
             conn = self._get_conn()
@@ -336,8 +335,16 @@ class SessionStore:
 
     @staticmethod
     def _row_to_session(row: sqlite3.Row) -> Session:
+        import dataclasses
+
         turns_raw = json.loads(row["turns"] or "[]")
-        turns = [Turn(**t) if isinstance(t, dict) else t for t in turns_raw]
+        turn_fields = {f.name for f in dataclasses.fields(Turn)}
+        turns = [
+            Turn(**{k: v for k, v in t.items() if k in turn_fields})
+            if isinstance(t, dict)
+            else t
+            for t in turns_raw
+        ]
         meta_raw = json.loads(row["metadata"] or "{}")
         return Session(
             id=row["id"],

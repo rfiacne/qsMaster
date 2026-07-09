@@ -203,6 +203,16 @@ class StandardAnswerStore:
 
         logger.debug(f"标准答案库已保存: {len(data)} 条 → {self.answers_file}")
 
+    def close(self) -> None:
+        """关闭存储，释放资源"""
+        self.save()
+
+    def __enter__(self) -> StandardAnswerStore:
+        return self
+
+    def __exit__(self, *args: Any) -> None:
+        self.close()
+
     # ─── CRUD ───────────────────────────────────────────────
 
     def add(self, answer: StandardAnswer) -> bool:

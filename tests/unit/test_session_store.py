@@ -99,9 +99,9 @@ class TestSession:
 class TestSessionStore:
     @pytest.fixture(autouse=True)
     def setup(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            self.store = SessionStore(store_path=tmpdir)
-            self.store.load()
+        with tempfile.TemporaryDirectory() as tmpdir, SessionStore(store_path=tmpdir) as store:
+            store.load()
+            self.store = store
             yield
 
     def test_empty(self):
@@ -170,7 +170,7 @@ class TestSessionStore:
             assert len(restored.turns) == 1
             store2.close()
         finally:
-            shutil.rmtree(tmpdir)
+            shutil.rmtree(tmpdir, ignore_errors=True)
 
     def test_clear_old(self):
         import time as tm
@@ -230,9 +230,9 @@ class TestSessionIsolation:
 
     @pytest.fixture(autouse=True)
     def setup(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            self.store = SessionStore(store_path=tmpdir)
-            self.store.load()
+        with tempfile.TemporaryDirectory() as tmpdir, SessionStore(store_path=tmpdir) as store:
+            store.load()
+            self.store = store
             yield
 
     def test_sessions_isolated(self):
